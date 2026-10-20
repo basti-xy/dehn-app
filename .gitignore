@@ -1,0 +1,4 @@
+# Persönliche Inhalte gehören ins private Daten-Repository, nicht hierher
+routines.json
+*backup*.json
+start.cmd
