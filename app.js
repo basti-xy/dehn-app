@@ -34,6 +34,7 @@ const APP_DEFAULTS = {
   autoAdvanceRepExercises: true,
   sound: true,
   voice: true,
+  mixAudio: true, // iPad/iPhone: Ton & Ansage mit anderem Audio (z. B. Bild-in-Bild-Video) mischen
 };
 
 /* ---------- Speicher (localStorage, immer mit try/catch) ---------- */
@@ -138,6 +139,20 @@ const app = document.getElementById('app');
 function refreshCfg() {
   const overrides = store.get(KEYS.settings, {});
   cfg = { ...APP_DEFAULTS, ...(DATA?.settings || {}), ...(overrides && typeof overrides === 'object' ? overrides : {}) };
+  applyAudioSession();
+}
+
+/**
+ * Audio Session API (Safari/iPadOS 16.4+): legt fest, wie sich Töne und Sprachansage zu anderem Audio verhalten.
+ *  ambient   → läuft parallel, ein Video im Bild-in-Bild spielt einfach weiter
+ *  transient → anderes Audio pausiert kurz und läuft danach von selbst weiter
+ * Andere Browser kennen die API nicht – dort ändert sich nichts.
+ */
+const hasAudioSession = 'audioSession' in navigator;
+function applyAudioSession() {
+  try {
+    if (hasAudioSession) navigator.audioSession.type = cfg.mixAudio ? 'ambient' : 'transient';
+  } catch { /* optional */ }
 }
 function saveSetting(key, value) {
   const o = store.get(KEYS.settings, {}) || {};
@@ -536,6 +551,7 @@ if (hasSpeech) { pickVoice(); speechSynthesis.addEventListener?.('voiceschanged'
 function speak(text, force = false) {
   if (!hasSpeech || (!cfg.voice && !force)) return;
   try {
+    applyAudioSession(); // vor jeder Ansage sicherstellen, sonst unterbricht iPadOS laufende Videos
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'de-DE';
@@ -1253,6 +1269,7 @@ function renderSettings() {
       ${stepperHtml('sideSwitchSeconds', 'Seitenwechsel', 'Pause zwischen links und rechts', 1, 0, 20)}
       ${toggleHtml('sound', 'Töne', '3-2-1, Start, Seitenwechsel, Satzpause', '<button class="btn btn-ghost btn-sm" data-act="test-sound">Test</button>')}
       ${toggleHtml('voice', 'Sprachansage', hasSpeech ? (deVoice ? `Stimme: ${esc(deVoice.name)}` : 'Deutsche Ansage der nächsten Übung') : 'Von diesem Browser nicht unterstützt', hasSpeech ? '<button class="btn btn-ghost btn-sm" data-act="test-voice">Test</button>' : '', !hasSpeech)}
+      ${hasAudioSession ? toggleHtml('mixAudio', 'Parallel zu Video/Musik', 'An: Ansagen laufen parallel weiter. Aus: Video pausiert kurz und läuft danach von selbst weiter.') : ''}
       ${toggleHtml('autoAdvanceRepExercises', 'Auto-Weiter bei Wiederholungen', 'Aus: Nach der geschätzten Zeit wartet die App auf „Fertig“')}
       <div class="set-foot"><button class="btn btn-ghost btn-sm" data-act="reset-settings">Auf Standard zurücksetzen</button></div>
     </section>

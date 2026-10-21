@@ -20,6 +20,8 @@
   --radius: 18px;
   --radius-sm: 12px;
   --safe-top: env(safe-area-inset-top, 0px);
+  /* iPadOS/iOS legen unter die Statusleiste einen Unschärfe-Streifen, der etwas tiefer reicht als die Safe Area */
+  --top-gap: calc(var(--safe-top) + 28px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
@@ -46,7 +48,7 @@ code { font-size: .9em; background: var(--surface-2); padding: 1px 6px; border-r
 .page {
   max-width: 640px;
   margin: 0 auto;
-  padding: calc(12px + var(--safe-top)) 16px calc(32px + var(--safe-bottom));
+  padding: var(--top-gap) 16px calc(32px + var(--safe-bottom));
 }
 .topbar {
   display: flex;
@@ -239,7 +241,7 @@ code { font-size: .9em; background: var(--surface-2); padding: 1px 6px; border-r
   display: grid;
   grid-template-rows: auto 1fr auto;
   background: var(--bg);
-  padding-top: var(--safe-top);
+  padding-top: calc(var(--top-gap) - 10px); /* .p-top bringt selbst 10px mit */
 }
 .player.kind-transition { --kind: var(--transition); }
 .player.kind-switch { --kind: var(--transition); }
