@@ -35,7 +35,7 @@ const APP_DEFAULTS = {
   autoAdvanceRepExercises: true,
   sound: true,
   voice: true,
-  mediaAudio: false, // iPad/iPhone: Ton als Medienwiedergabe anmelden (hörbar im Stummmodus)
+  firstVoiceSynth: true, // iPad/iPhone: erste Ansage jeder Einheit über die Systemstimme (Ton im Stummmodus hörbar)
 };
 
 /* ---------- Speicher (localStorage, immer mit try/catch) ---------- */
@@ -658,10 +658,21 @@ function prepareVoice(routine) {
   keys.forEach((k) => voiceClip(k));
 }
 
+/**
+ * iPad/iPhone (Safari): Aufnahmen und Pieptöne laufen als "Umgebungston" – sie mischen sich mit Videos,
+ * sind im Stummmodus aber still. Die Systemstimme meldet die Seite dagegen als Medienwiedergabe an:
+ * Danach ist der Ton der Seite im Stummmodus hörbar und folgt der Medienlautstärke (ein laufendes Video
+ * hält dabei einmal an). Deshalb kommt – wenn eingeschaltet – nur die erste Ansage jeder Einheit von der
+ * Systemstimme, alle weiteren aus den Aufnahmen.
+ */
+const isAppleWebKit = 'audioSession' in navigator; // Safari 16.4+ auf iPad/iPhone/Mac
+const useFirstVoiceSynth = () => isAppleWebKit && hasSpeech && cfg.firstVoiceSynth;
+
 /** Ansage abspielen: Aufnahmen hintereinander, sonst Ersatz über die eingebaute Sprachausgabe. */
-async function say(parts, force = false) {
+async function say(parts, force = false, preferSynth = false) {
   if ((!cfg.voice && !force) || !parts?.length) return;
   const seq = ++voice.seq;
+  if (preferSynth) { speakSynth(parts.join(', ')); return; }
   if (voice.index && actx && missingVoiceKeys(parts).length === 0) {
     const clips = await Promise.race([
       Promise.all(parts.map((p) => voiceClip(voiceKey(p)))),
@@ -812,7 +823,11 @@ function onStepEnter(silent) {
   const prev = run.steps[run.i - 1];
   ({ transition: sfx.soft, switch: sfx.switchSide, rest: sfx.rest, work: sfx.start })[st.kind]?.();
   const parts = stepParts(st, prev);
-  if (parts) say(parts);
+  if (parts && cfg.voice) {
+    const first = !run.spokeFirst; // erste Ansage dieser Einheit
+    run.spokeFirst = true;
+    say(parts, false, first && useFirstVoiceSynth());
+  }
 }
 
 function goTo(i) {
@@ -1408,7 +1423,7 @@ function renderSettings() {
       ${stepperHtml('sideSwitchSeconds', 'Seitenwechsel', 'Pause zwischen links und rechts', 1, 0, 20)}
       ${toggleHtml('sound', 'Töne', '3-2-1, Start, Seitenwechsel, Satzpause', '<button class="btn btn-ghost btn-sm" data-act="test-sound">Test</button>')}
       ${toggleHtml('voice', 'Sprachansage', esc(voiceStatusText()), '<button class="btn btn-ghost btn-sm" data-act="test-voice">Test</button>')}
-      ${hasAudioSession ? toggleHtml('mediaAudio', 'Ton auch im Stummmodus (Test)', 'Meldet den Ton als Medienwiedergabe an und folgt der Medienlautstärke. Kann ein Video im Bild-in-Bild anhalten. Die App startet beim Umschalten neu.') : ''}
+      ${isAppleWebKit && hasSpeech ? toggleHtml('firstVoiceSynth', 'Ton im Stummmodus', 'Die erste Ansage jeder Einheit kommt von der iPad-Stimme. Danach ist die App im Stummmodus hörbar (Medienlautstärke). Ein Video im Bild-in-Bild hält dabei einmal an.') : ''}
       ${toggleHtml('autoAdvanceRepExercises', 'Auto-Weiter bei Wiederholungen', 'Aus: Nach der geschätzten Zeit wartet die App auf „Fertig“')}
       <div class="set-foot"><button class="btn btn-ghost btn-sm" data-act="reset-settings">Auf Standard zurücksetzen</button></div>
     </section>
@@ -1584,14 +1599,7 @@ app.addEventListener('click', async (e) => {
       say(st ? announceParts(st) : ['Geschafft'], true);
       break;
     }
-    case 'reset-settings': {
-      const hadMedia = cfg.mediaAudio;
-      store.remove(KEYS.settings);
-      if (hadMedia) { location.reload(); break; }
-      refreshCfg();
-      renderSettings();
-      break;
-    }
+    case 'reset-settings': store.remove(KEYS.settings); refreshCfg(); renderSettings(); break;
     case 'export': if (await exportBackup()) { toast('Backup erstellt.'); renderSettings(); } break;
     case 'sync-connect': {
       el.disabled = true;
@@ -1651,9 +1659,7 @@ app.addEventListener('click', async (e) => {
 
 app.addEventListener('change', async (e) => {
   const key = e.target.dataset?.setting;
-  if (key) saveSetting(key, e.target.checked);
-  if (key === 'mediaAudio') location.reload(); // Audio-Art nur vor dem ersten Ton setzbar
-  if (e.target.id === 'import-file' && e.target.files?.[0]) {
+  if (key) saveSetting(key, e.target.checked);  if (e.target.id === 'import-file' && e.target.files?.[0]) {
     const msg = await importBackup(e.target.files[0]);
     renderSettings();
     toast(msg);
@@ -1738,22 +1744,8 @@ function useRoutines(json, source) {
   return true;
 }
 
-/**
- * iPad/iPhone (Safari 16.4+): Ohne Angabe gilt der Ton der Seite als "Umgebungston" – er mischt sich mit
- * Videos, ist im Stummmodus aber still. Mit "playback" gilt er als Medienwiedergabe (wie früher durch die
- * Sprachausgabe): hörbar im Stummmodus, folgt der Medienlautstärke. Wird nur einmal beim Start gesetzt,
- * bevor ein Ton läuft – Umstellen zur Laufzeit hat auf dem iPad jeden Ton abgewürgt.
- */
-const hasAudioSession = 'audioSession' in navigator;
-function applyAudioSessionOnce() {
-  try {
-    if (hasAudioSession && cfg.mediaAudio) navigator.audioSession.type = 'playback';
-  } catch { /* optional */ }
-}
-
 async function init() {
   refreshCfg();
-  applyAudioSessionOnce();
   storageOk = checkStorage();
   await loadRoutines();
   loadVoiceIndex(); // Ansage-Aufnahmen (im Hintergrund)
