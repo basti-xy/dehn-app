@@ -251,6 +251,7 @@ code { font-size: .9em; background: var(--surface-2); padding: 1px 6px; border-r
 
 .p-top { display: flex; align-items: center; gap: 12px; padding: 10px 16px 6px; }
 .p-progress { flex: 1; min-width: 0; }
+.mute-btn.is-muted { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
 .p-bar { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
 .p-bar span { display: block; height: 100%; width: 0; background: var(--kind); border-radius: inherit; }
 .p-meta { display: flex; justify-content: space-between; margin-top: 5px; font-size: .9rem; color: var(--muted); font-variant-numeric: tabular-nums; }

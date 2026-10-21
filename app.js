@@ -35,7 +35,7 @@ const APP_DEFAULTS = {
   autoAdvanceRepExercises: true,
   sound: true,
   voice: true,
-  silentModeSound: true, // iPad/iPhone: Ton auch im Stummmodus (Audio Session "transient")
+  muted: false, // Ton-Schalter im Player: aus = gar kein Ton (Video im Bild-in-Bild läuft weiter)
 };
 
 /* ---------- Speicher (localStorage, immer mit try/catch) ---------- */
@@ -124,6 +124,8 @@ const ICONS = {
   moon: svg('<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>'),
   trash: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
   shield: svg('<path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/>'),
+  soundOn: svg('<path d="M4 9.5v5h3.5L12 19V5L7.5 9.5z" fill="currentColor"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>'),
+  soundOff: svg('<path d="M4 9.5v5h3.5L12 19V5L7.5 9.5z" fill="currentColor"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>'),
 };
 
 /* ---------- Zustand ---------- */
@@ -501,17 +503,19 @@ function computeWeekly(history, now = new Date()) {
 let actx = null;
 
 /**
- * iPad/iPhone (Safari 17+, Audio Session API):
- *  ohne Angabe → Ton mischt sich mit Videos, ist im Stummmodus aber still
- *  "transient"  → Ton mischt sich, ein Video wird währenddessen kurz leiser, Stummmodus wird ignoriert
- * Der Modus wird EINMAL beim Start gesetzt, bevor ein Ton läuft. Zwischen den Tönen wird der
- * Audio-Kanal angehalten, damit das Video nicht die ganze Einheit über leiser bleibt.
+ * iPad/iPhone (Safari, Audio Session API): Safari bildet jeden Typ auf einen festen iOS-Modus ab und setzt
+ * nie "mixWithOthers". Bei einem Video aus einer anderen App gibt es deshalb nur zwei Möglichkeiten:
+ *  "playback"   → hörbar im Stummmodus (Medienlautstärke), unterbricht das andere Video
+ *  ambient/auto → mischt sich mit dem Video, im Stummmodus aber still
+ * Die App nimmt "playback" und bietet im Player einen Ton-Schalter: Ton aus = die App gibt gar keinen Ton aus
+ * (AudioContext angehalten), dann läuft das Video ungestört weiter.
+ * Der Typ wird EINMAL beim Start gesetzt, bevor ein Ton läuft (Umstellen zur Laufzeit würgt den Ton ab).
+ * Zwischen den Tönen wird der AudioContext angehalten, damit die App den Ton nicht dauerhaft belegt.
  */
 const isAppleWebKit = 'audioSession' in navigator;
-const transientAudio = () => isAppleWebKit && cfg.silentModeSound;
 function applyAudioSessionOnce() {
   try {
-    if (transientAudio()) navigator.audioSession.type = 'transient';
+    if (isAppleWebKit) navigator.audioSession.type = 'playback';
   } catch { /* optional */ }
 }
 let audioUntil = 0;   // bis wann (AudioContext-Zeit) noch etwas geplant ist
@@ -520,7 +524,7 @@ let idleTimer = null;
 function holdAudioUntil(endTime) {
   if (!actx) return;
   audioUntil = Math.max(audioUntil, endTime);
-  if (!transientAudio()) return;
+  if (!isAppleWebKit) return;
   scheduleIdleCheck();
 }
 function scheduleIdleCheck() {
@@ -545,7 +549,7 @@ function audioInit() {
   } catch { actx = null; }
 }
 function tone(freq, dur, { type = 'sine', vol = 0.28, delay = 0 } = {}) {
-  if (!actx || !cfg.sound) return;
+  if (!actx || !cfg.sound || cfg.muted) return;
   try {
     wakeAudio();
     const t0 = actx.currentTime + delay;
@@ -699,7 +703,7 @@ function prepareVoice(routine) {
 
 /** Ansage abspielen: Aufnahmen hintereinander, sonst Ersatz über die eingebaute Sprachausgabe. */
 async function say(parts, force = false) {
-  if ((!cfg.voice && !force) || !parts?.length) return;
+  if (((!cfg.voice || cfg.muted) && !force) || !parts?.length) return;
   const seq = ++voice.seq;
   if (voice.index && actx && missingVoiceKeys(parts).length === 0) {
     const clips = await Promise.race([
@@ -775,8 +779,8 @@ function releaseWakeLock() {
 function startRun(id) {
   const routine = routineById(id);
   if (!routine) return;
-  audioInit();
   refreshCfg();
+  if (!cfg.muted) audioInit(); // bei "Ton aus" gar nichts anmelden, damit ein Video weiterläuft
   const steps = buildSteps(routine);
   if (!steps.length) return;
   const suffix = new Array(steps.length + 1).fill(0);
@@ -884,7 +888,7 @@ function resumeRun() {
   run.stepStart += d;
   run.pausedTotal += d;
   run.pausedAt = null;
-  audioInit();
+  if (!cfg.muted) audioInit();
   requestWakeLock();
   updatePauseUi();
 }
@@ -1267,6 +1271,7 @@ function renderPlayer() {
         <div class="p-bar"><span id="p-bar"></span></div>
         <div class="p-meta"><span>Übung ${st.exIndex + 1}/${run.routine.exercises.length}</span><span id="p-remaining"></span></div>
       </div>
+      <button class="icon-btn mute-btn" data-act="mute" id="btn-mute"></button>
     </div>
     <div class="p-scroll">
       <div class="p-stage">
@@ -1318,8 +1323,10 @@ function renderPlayer() {
     unit: document.getElementById('ring-unit'),
     toggle: document.getElementById('btn-toggle'),
     done: document.getElementById('btn-done'),
+    mute: document.getElementById('btn-mute'),
     last: {},
   };
+  updateMuteUi();
   updatePauseUi();
   renderPlayerDynamic();
 }
@@ -1357,6 +1364,14 @@ function renderPlayerDynamic() {
   setText('rem', playerEls.remaining, `noch ${fmtClock(remaining)}`);
 }
 
+function updateMuteUi() {
+  const b = playerEls?.mute;
+  if (!b) return;
+  b.innerHTML = cfg.muted ? ICONS.soundOff : ICONS.soundOn;
+  b.classList.toggle('is-muted', !!cfg.muted);
+  b.setAttribute('aria-label', cfg.muted ? 'Ton einschalten' : 'Ton ausschalten');
+  b.title = cfg.muted ? 'Ton aus – Video läuft weiter' : 'Ton an';
+}
 function updatePauseUi() {
   if (!run || !playerEls) return;
   const paused = !!run.pausedAt;
@@ -1448,7 +1463,6 @@ function renderSettings() {
       ${stepperHtml('sideSwitchSeconds', 'Seitenwechsel', 'Pause zwischen links und rechts', 1, 0, 20)}
       ${toggleHtml('sound', 'Töne', '3-2-1, Start, Seitenwechsel, Satzpause', '<button class="btn btn-ghost btn-sm" data-act="test-sound">Test</button>')}
       ${toggleHtml('voice', 'Sprachansage', esc(voiceStatusText()), '<button class="btn btn-ghost btn-sm" data-act="test-voice">Test</button>')}
-      ${isAppleWebKit ? toggleHtml('silentModeSound', 'Ton im Stummmodus', 'An: Ansagen und Töne sind auch im Stummmodus hörbar, ein Video im Bild-in-Bild wird dabei kurz leiser. Aus: Video unverändert, im Stummmodus still. Die App startet beim Umschalten neu.') : ''}
       ${toggleHtml('autoAdvanceRepExercises', 'Auto-Weiter bei Wiederholungen', 'Aus: Nach der geschätzten Zeit wartet die App auf „Fertig“')}
       <div class="set-foot"><button class="btn btn-ghost btn-sm" data-act="reset-settings">Auf Standard zurücksetzen</button></div>
     </section>
@@ -1624,12 +1638,21 @@ app.addEventListener('click', async (e) => {
       say(st ? announceParts(st) : ['Geschafft'], true);
       break;
     }
-    case 'reset-settings': {
-      const before = cfg.silentModeSound;
-      store.remove(KEYS.settings);
-      refreshCfg();
-      if (cfg.silentModeSound !== before) { location.reload(); break; } // Audio-Modus geändert
-      renderSettings();
+    case 'reset-settings': store.remove(KEYS.settings); refreshCfg(); renderSettings(); break;
+    case 'mute': {
+      saveSetting('muted', !cfg.muted);
+      if (cfg.muted) {
+        stopSpeech();
+        if (actx && actx.state === 'running') actx.suspend().catch(() => {}); // Ton ganz freigeben
+      } else {
+        audioInit();                    // Tippen = Nutzergeste, darf den Ton starten
+        if (run) prepareVoice(run.routine);
+      }
+      updateMuteUi();
+      el.blur();
+      toast(cfg.muted
+        ? 'Ton aus' + (isAppleWebKit ? ' – ein Video im Bild-in-Bild läuft weiter.' : '.')
+        : 'Ton an' + (isAppleWebKit ? ' – auch im Stummmodus hörbar, ein Video hält bei Ansagen an.' : '.'));
       break;
     }
     case 'export': if (await exportBackup()) { toast('Backup erstellt.'); renderSettings(); } break;
@@ -1692,7 +1715,6 @@ app.addEventListener('click', async (e) => {
 app.addEventListener('change', async (e) => {
   const key = e.target.dataset?.setting;
   if (key) saveSetting(key, e.target.checked);
-  if (key === 'silentModeSound') location.reload(); // Audio-Modus nur vor dem ersten Ton setzbar
   if (e.target.id === 'import-file' && e.target.files?.[0]) {
     const msg = await importBackup(e.target.files[0]);
     renderSettings();
