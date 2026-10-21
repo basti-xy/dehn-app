@@ -35,6 +35,7 @@ const APP_DEFAULTS = {
   autoAdvanceRepExercises: true,
   sound: true,
   voice: true,
+  mediaAudio: false, // iPad/iPhone: Ton als Medienwiedergabe anmelden (hörbar im Stummmodus)
 };
 
 /* ---------- Speicher (localStorage, immer mit try/catch) ---------- */
@@ -1407,6 +1408,7 @@ function renderSettings() {
       ${stepperHtml('sideSwitchSeconds', 'Seitenwechsel', 'Pause zwischen links und rechts', 1, 0, 20)}
       ${toggleHtml('sound', 'Töne', '3-2-1, Start, Seitenwechsel, Satzpause', '<button class="btn btn-ghost btn-sm" data-act="test-sound">Test</button>')}
       ${toggleHtml('voice', 'Sprachansage', esc(voiceStatusText()), '<button class="btn btn-ghost btn-sm" data-act="test-voice">Test</button>')}
+      ${hasAudioSession ? toggleHtml('mediaAudio', 'Ton auch im Stummmodus (Test)', 'Meldet den Ton als Medienwiedergabe an und folgt der Medienlautstärke. Kann ein Video im Bild-in-Bild anhalten. Die App startet beim Umschalten neu.') : ''}
       ${toggleHtml('autoAdvanceRepExercises', 'Auto-Weiter bei Wiederholungen', 'Aus: Nach der geschätzten Zeit wartet die App auf „Fertig“')}
       <div class="set-foot"><button class="btn btn-ghost btn-sm" data-act="reset-settings">Auf Standard zurücksetzen</button></div>
     </section>
@@ -1582,7 +1584,14 @@ app.addEventListener('click', async (e) => {
       say(st ? announceParts(st) : ['Geschafft'], true);
       break;
     }
-    case 'reset-settings': store.remove(KEYS.settings); refreshCfg(); renderSettings(); break;
+    case 'reset-settings': {
+      const hadMedia = cfg.mediaAudio;
+      store.remove(KEYS.settings);
+      if (hadMedia) { location.reload(); break; }
+      refreshCfg();
+      renderSettings();
+      break;
+    }
     case 'export': if (await exportBackup()) { toast('Backup erstellt.'); renderSettings(); } break;
     case 'sync-connect': {
       el.disabled = true;
@@ -1643,6 +1652,7 @@ app.addEventListener('click', async (e) => {
 app.addEventListener('change', async (e) => {
   const key = e.target.dataset?.setting;
   if (key) saveSetting(key, e.target.checked);
+  if (key === 'mediaAudio') location.reload(); // Audio-Art nur vor dem ersten Ton setzbar
   if (e.target.id === 'import-file' && e.target.files?.[0]) {
     const msg = await importBackup(e.target.files[0]);
     renderSettings();
@@ -1728,8 +1738,22 @@ function useRoutines(json, source) {
   return true;
 }
 
+/**
+ * iPad/iPhone (Safari 16.4+): Ohne Angabe gilt der Ton der Seite als "Umgebungston" – er mischt sich mit
+ * Videos, ist im Stummmodus aber still. Mit "playback" gilt er als Medienwiedergabe (wie früher durch die
+ * Sprachausgabe): hörbar im Stummmodus, folgt der Medienlautstärke. Wird nur einmal beim Start gesetzt,
+ * bevor ein Ton läuft – Umstellen zur Laufzeit hat auf dem iPad jeden Ton abgewürgt.
+ */
+const hasAudioSession = 'audioSession' in navigator;
+function applyAudioSessionOnce() {
+  try {
+    if (hasAudioSession && cfg.mediaAudio) navigator.audioSession.type = 'playback';
+  } catch { /* optional */ }
+}
+
 async function init() {
   refreshCfg();
+  applyAudioSessionOnce();
   storageOk = checkStorage();
   await loadRoutines();
   loadVoiceIndex(); // Ansage-Aufnahmen (im Hintergrund)
