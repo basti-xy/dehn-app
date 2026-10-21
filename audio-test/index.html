@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0e1014">
+  <title>Audio-Test</title>
+  <style>
+    :root { color-scheme: dark; --bg: #0e1014; --surface: #171a21; --border: #2b303b; --text: #eef1f6; --muted: #98a1b0; --accent: #3ddc97; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.45 system-ui, -apple-system, sans-serif; }
+    main { max-width: 640px; margin: 0 auto; padding: calc(env(safe-area-inset-top, 0px) + 28px) 16px 40px; }
+    h1 { margin: 0 0 4px; font-size: 1.6rem; }
+    h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 22px 0 8px; }
+    p { color: var(--muted); margin: 6px 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+    a.type, button { display: flex; align-items: center; justify-content: center; min-height: 52px; padding: 8px 12px; border-radius: 12px;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; text-decoration: none; text-align: center; cursor: pointer; }
+    a.type.on { background: var(--accent); color: #062016; font-weight: 700; border-color: transparent; }
+    label { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+    .status { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+    .status b { font-variant-numeric: tabular-nums; }
+    #log { white-space: pre-wrap; font: 13px/1.5 ui-monospace, Menlo, monospace; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; min-height: 80px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Audio-Test</h1>
+  <p>Video im Bild-in-Bild starten, Stummmodus so einstellen wie beim Training, dann Modus wählen und Töne abspielen.
+     Für jede Kombination notieren: <b>hörbar?</b> und <b>läuft das Video weiter?</b></p>
+
+  <h2>1. Audio-Session-Typ (Seite lädt neu)</h2>
+  <div class="grid" id="types"></div>
+  <label><input type="checkbox" id="late"> Typ erst direkt vor dem Abspielen setzen (statt beim Laden)</label>
+
+  <h2>Status</h2>
+  <div class="status">
+    <span>audioSession.type</span><b id="s-type">–</b>
+    <span>audioSession.state</span><b id="s-state">–</b>
+    <span>AudioContext</span><b id="s-ctx">–</b>
+    <span>iOS/Browser</span><b id="s-ua">–</b>
+  </div>
+
+  <h2>2. Abspielen</h2>
+  <div class="grid">
+    <button data-play="beep">Web Audio: Piepton</button>
+    <button data-play="clip">Web Audio: Aufnahme</button>
+    <button data-play="element">&lt;audio&gt;-Element</button>
+    <button data-play="element-webaudio">&lt;audio&gt; über Web Audio</button>
+    <button data-play="speech">Sprachausgabe (speechSynthesis)</button>
+    <button data-play="suspend">AudioContext anhalten</button>
+  </div>
+
+  <h2>Protokoll</h2>
+  <div id="log"></div>
+</main>
+<script>
+'use strict';
+const TYPES = ['auto', 'ambient', 'transient', 'transient-solo', 'playback', 'play-and-record'];
+const params = new URLSearchParams(location.search);
+const type = TYPES.includes(params.get('type')) ? params.get('type') : 'auto';
+const late = params.get('late') === '1';
+const hasSession = 'audioSession' in navigator;
+const $ = (id) => document.getElementById(id);
+const logEl = $('log');
+function log(msg) {
+  const t = new Date().toLocaleTimeString('de-DE');
+  logEl.textContent = `${t}  ${msg}\n` + logEl.textContent;
+}
+
+function setType() {
+  if (!hasSession) return log('navigator.audioSession gibt es in diesem Browser nicht');
+  try {
+    navigator.audioSession.type = type;
+    log(`audioSession.type = '${type}' gesetzt`);
+  } catch (e) { log(`Fehler beim Setzen: ${e.message}`); }
+}
+if (!late && type !== 'auto') setType();
+
+// Typ-Auswahl
+$('types').innerHTML = TYPES.map((t) => `<a class="type ${t === type ? 'on' : ''}" href="?type=${t}${late ? '&late=1' : ''}">${t}</a>`).join('');
+$('late').checked = late;
+$('late').addEventListener('change', (e) => { location.search = `?type=${type}${e.target.checked ? '&late=1' : ''}`; });
+
+let ctx = null;
+let clipBuffer = null;
+let elementNode = null;
+const audioEl = new Audio('ansage.wav');
+audioEl.preload = 'auto';
+
+function ensureCtx() {
+  if (!ctx) {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    ctx.onstatechange = () => { log(`AudioContext: ${ctx.state}`); refresh(); };
+    log('AudioContext erstellt');
+  }
+  if (ctx.state !== 'running') ctx.resume().catch((e) => log(`resume fehlgeschlagen: ${e.message}`));
+  return ctx;
+}
+async function loadClip() {
+  if (clipBuffer) return clipBuffer;
+  const buf = await (await fetch('ansage.wav')).arrayBuffer();
+  clipBuffer = await new Promise((ok, fail) => ensureCtx().decodeAudioData(buf, ok, fail));
+  return clipBuffer;
+}
+
+const players = {
+  beep() {
+    const c = ensureCtx();
+    [0, 1, 2].forEach((i) => {
+      const t0 = c.currentTime + i * 0.35;
+      const o = c.createOscillator(); const g = c.createGain();
+      o.frequency.value = i === 2 ? 1175 : 660;
+      g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.3, t0 + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.2);
+      o.connect(g).connect(c.destination); o.start(t0); o.stop(t0 + 0.25);
+    });
+  },
+  async clip() {
+    const c = ensureCtx();
+    const b = await loadClip();
+    const s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start();
+  },
+  element() {
+    audioEl.currentTime = 0;
+    audioEl.play().then(() => log('<audio> spielt')).catch((e) => log(`<audio> Fehler: ${e.message}`));
+  },
+  'element-webaudio'() {
+    const c = ensureCtx();
+    if (!elementNode) { elementNode = c.createMediaElementSource(audioEl); elementNode.connect(c.destination); }
+    audioEl.currentTime = 0;
+    audioEl.play().catch((e) => log(`<audio> Fehler: ${e.message}`));
+  },
+  speech() {
+    const u = new SpeechSynthesisUtterance('Seitenwechsel. Rechts. 60 Sekunden.');
+    u.lang = 'de-DE';
+    speechSynthesis.cancel(); speechSynthesis.speak(u);
+  },
+  suspend() { if (ctx) ctx.suspend().then(() => log('AudioContext angehalten')); },
+};
+
+document.querySelector('main').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-play]');
+  if (!b) return;
+  if (late && type !== 'auto' && b.dataset.play !== 'suspend') setType();
+  log(`▶ ${b.textContent}`);
+  try { await players[b.dataset.play](); } catch (err) { log(`Fehler: ${err.message}`); }
+  setTimeout(refresh, 300);
+});
+
+function refresh() {
+  $('s-type').textContent = hasSession ? navigator.audioSession.type : 'nicht vorhanden';
+  $('s-state').textContent = hasSession ? (navigator.audioSession.state || '–') : '–';
+  $('s-ctx').textContent = ctx ? ctx.state : 'noch nicht erstellt';
+}
+if (hasSession) navigator.audioSession.onstatechange = () => { log(`audioSession.state: ${navigator.audioSession.state}`); refresh(); };
+$('s-ua').textContent = navigator.userAgent.replace(/^Mozilla\/5\.0 /, '');
+refresh();
+</script>
+</body>
+</html>
