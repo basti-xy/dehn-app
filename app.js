@@ -34,7 +34,7 @@ const APP_DEFAULTS = {
   autoAdvanceRepExercises: true,
   sound: true,
   voice: true,
-  mixAudio: true, // iPad/iPhone: Ton & Ansage mit anderem Audio (z. B. Bild-in-Bild-Video) mischen
+  audioMode: 'auto', // iPad/iPhone: auto (Systemstandard) | ambient (parallel zu Video) | transient (Video kurz pausieren)
 };
 
 /* ---------- Speicher (localStorage, immer mit try/catch) ---------- */
@@ -139,19 +139,23 @@ const app = document.getElementById('app');
 function refreshCfg() {
   const overrides = store.get(KEYS.settings, {});
   cfg = { ...APP_DEFAULTS, ...(DATA?.settings || {}), ...(overrides && typeof overrides === 'object' ? overrides : {}) };
-  applyAudioSession();
 }
 
 /**
- * Audio Session API (Safari/iPadOS 16.4+): legt fest, wie sich Töne und Sprachansage zu anderem Audio verhalten.
- *  ambient   → läuft parallel, ein Video im Bild-in-Bild spielt einfach weiter
- *  transient → anderes Audio pausiert kurz und läuft danach von selbst weiter
- * Andere Browser kennen die API nicht – dort ändert sich nichts.
+ * Audio Session API (Safari/iPadOS 16.4+): wie sich Töne und Sprachansage zu anderem Audio verhalten.
+ *  auto      → Systemstandard, wird nicht angefasst
+ *  ambient   → parallel, ein Video im Bild-in-Bild soll weiterlaufen
+ *  transient → anderes Audio pausiert kurz und soll danach weiterlaufen
+ * Wird nur EINMAL beim Start gesetzt, bevor irgendein Ton läuft – ein Umstellen während
+ * laufender Wiedergabe kann iPadOS den Ton der Seite komplett abwürgen lassen.
  */
 const hasAudioSession = 'audioSession' in navigator;
-function applyAudioSession() {
+const AUDIO_MODES = ['auto', 'ambient', 'transient'];
+function applyAudioSessionOnce() {
   try {
-    if (hasAudioSession) navigator.audioSession.type = cfg.mixAudio ? 'ambient' : 'transient';
+    if (hasAudioSession && cfg.audioMode !== 'auto' && AUDIO_MODES.includes(cfg.audioMode)) {
+      navigator.audioSession.type = cfg.audioMode;
+    }
   } catch { /* optional */ }
 }
 function saveSetting(key, value) {
@@ -508,12 +512,14 @@ let actx = null;
 function audioInit() {
   try {
     actx = actx || new (window.AudioContext || window.webkitAudioContext)();
-    if (actx.state === 'suspended') actx.resume();
+    // iPadOS meldet nach Unterbrechungen (Anruf, anderes Audio, Sprachausgabe) "interrupted"
+    if (actx.state !== 'running') actx.resume().catch(() => {});
   } catch { actx = null; }
 }
 function tone(freq, dur, { type = 'sine', vol = 0.28, delay = 0 } = {}) {
   if (!actx || !cfg.sound) return;
   try {
+    if (actx.state !== 'running') actx.resume().catch(() => {});
     const t0 = actx.currentTime + delay;
     const osc = actx.createOscillator();
     const gain = actx.createGain();
@@ -551,7 +557,6 @@ if (hasSpeech) { pickVoice(); speechSynthesis.addEventListener?.('voiceschanged'
 function speak(text, force = false) {
   if (!hasSpeech || (!cfg.voice && !force)) return;
   try {
-    applyAudioSession(); // vor jeder Ansage sicherstellen, sonst unterbricht iPadOS laufende Videos
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'de-DE';
@@ -1269,7 +1274,12 @@ function renderSettings() {
       ${stepperHtml('sideSwitchSeconds', 'Seitenwechsel', 'Pause zwischen links und rechts', 1, 0, 20)}
       ${toggleHtml('sound', 'Töne', '3-2-1, Start, Seitenwechsel, Satzpause', '<button class="btn btn-ghost btn-sm" data-act="test-sound">Test</button>')}
       ${toggleHtml('voice', 'Sprachansage', hasSpeech ? (deVoice ? `Stimme: ${esc(deVoice.name)}` : 'Deutsche Ansage der nächsten Übung') : 'Von diesem Browser nicht unterstützt', hasSpeech ? '<button class="btn btn-ghost btn-sm" data-act="test-voice">Test</button>' : '', !hasSpeech)}
-      ${hasAudioSession ? toggleHtml('mixAudio', 'Parallel zu Video/Musik', 'An: Ansagen laufen parallel weiter. Aus: Video pausiert kurz und läuft danach von selbst weiter.') : ''}
+      ${hasAudioSession ? `<div class="set-row">
+        <div class="set-text"><div class="set-label">Bei Video/Musik nebenbei</div><div class="set-hint">Test-Modus – die App startet beim Umstellen neu. Klappt etwas nicht, zurück auf „Standard“.</div></div>
+        <select class="set-select" data-select-setting="audioMode" aria-label="Verhalten bei Video oder Musik">
+          ${[['auto', 'Standard'], ['ambient', 'Parallel'], ['transient', 'Kurz pausieren']].map(([v, l]) => `<option value="${v}" ${cfg.audioMode === v ? 'selected' : ''}>${l}</option>`).join('')}
+        </select>
+      </div>` : ''}
       ${toggleHtml('autoAdvanceRepExercises', 'Auto-Weiter bei Wiederholungen', 'Aus: Nach der geschätzten Zeit wartet die App auf „Fertig“')}
       <div class="set-foot"><button class="btn btn-ghost btn-sm" data-act="reset-settings">Auf Standard zurücksetzen</button></div>
     </section>
@@ -1438,7 +1448,14 @@ app.addEventListener('click', async (e) => {
     }
     case 'test-sound': audioInit(); sfx.tick(); setTimeout(sfx.tick, 1000); setTimeout(sfx.start, 2000); break;
     case 'test-voice': speak('Gleich: Übung, links, 60 Sekunden', true); break;
-    case 'reset-settings': store.remove(KEYS.settings); refreshCfg(); renderSettings(); break;
+    case 'reset-settings': {
+      const hadAudioMode = cfg.audioMode !== 'auto';
+      store.remove(KEYS.settings);
+      if (hadAudioMode) { location.reload(); break; } // Audio-Session zurück auf Systemstandard
+      refreshCfg();
+      renderSettings();
+      break;
+    }
     case 'export': if (await exportBackup()) { toast('Backup erstellt.'); renderSettings(); } break;
     case 'sync-connect': {
       el.disabled = true;
@@ -1497,6 +1514,10 @@ app.addEventListener('click', async (e) => {
 app.addEventListener('change', async (e) => {
   const key = e.target.dataset?.setting;
   if (key) saveSetting(key, e.target.checked);
+  if (e.target.dataset?.selectSetting === 'audioMode') {
+    saveSetting('audioMode', e.target.value);
+    location.reload(); // Audio-Session darf nur vor dem ersten Ton gesetzt werden
+  }
   if (e.target.id === 'import-file' && e.target.files?.[0]) {
     const msg = await importBackup(e.target.files[0]);
     renderSettings();
@@ -1584,6 +1605,7 @@ function useRoutines(json, source) {
 
 async function init() {
   refreshCfg();
+  applyAudioSessionOnce(); // vor jedem Ton
   storageOk = checkStorage();
   await loadRoutines();
   if (storageOk) await requestPersist(getHistory().length > 0); // erst fragen, wenn es etwas zu schützen gibt
