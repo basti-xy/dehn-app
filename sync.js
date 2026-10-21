@@ -112,6 +112,27 @@ const GHSync = (() => {
     }
   }
 
+  /** Lädt eine beliebige Datei (z. B. Audio) roh als ArrayBuffer – bis 100 MB. */
+  async function readRaw(cfg, path) {
+    let res;
+    try {
+      res = await fetch(`${API}/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${encPath(path)}`, {
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/vnd.github.raw',
+          Authorization: `Bearer ${cfg.token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      });
+    } catch {
+      throw new SyncError('network', 'Keine Verbindung zu GitHub.');
+    }
+    if (res.status === 401) throw new SyncError('auth', 'Token ungültig oder abgelaufen.', 401);
+    if (res.status === 404) throw new SyncError('notfound', `${path} nicht gefunden.`, 404);
+    if (!res.ok) throw new SyncError('other', `GitHub-Fehler ${res.status}`, res.status);
+    return res.arrayBuffer();
+  }
+
   async function writeFile(cfg, path, data, sha, message) {
     const base = `/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}`;
     const r = await api(cfg, 'PUT', `${base}/contents/${encPath(path)}`, {
@@ -147,5 +168,5 @@ const GHSync = (() => {
     throw new SyncError('conflict', 'Abgleich fehlgeschlagen (mehrfache gleichzeitige Änderung).');
   }
 
-  return { getConfig, setConfig, clearConfig, testRepo, readFile, writeFile, syncFile, SyncError };
+  return { getConfig, setConfig, clearConfig, testRepo, readFile, readRaw, writeFile, syncFile, SyncError };
 })();

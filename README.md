@@ -13,6 +13,11 @@ Hier liegt nur der Programmcode.
 |---|---|
 | `dehn-routines.json` | Routinen, Zyklus, Rollen (siehe unten) |
 | `dehn.json` | Verlauf, wird von der App geschrieben |
+| `dehn-audio/` | Sprachansagen als WAV-Bausteine plus `index.json` (Text → Datei) |
+
+Die Ansagen werden wie die Countdown-Töne über Web Audio abgespielt. Dadurch mischen sie sich mit anderem Audio
+(ein Video im Bild-in-Bild läuft weiter) und folgen der Medienlautstärke. Fehlt ein Baustein, nutzt die App die
+eingebaute Sprachausgabe des Browsers.
 
 Token: *Settings → Developer settings → Fine-grained tokens*. Bei *Repository access* nur das Daten-Repository auswählen,
 bei *Contents* **Read and write** setzen. Der Token wird nur im Browser des Geräts gespeichert und nur an `api.github.com` gesendet.

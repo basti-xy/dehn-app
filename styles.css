@@ -348,10 +348,6 @@ code { font-size: .9em; background: var(--surface-2); padding: 1px 6px; border-r
 .set-hint { color: var(--muted); font-size: .85rem; }
 .set-ctrl { display: flex; align-items: center; gap: 10px; }
 .set-foot { padding: 14px 0 10px; }
-.set-select {
-  flex: none; min-height: 40px; padding: 0 10px; border-radius: var(--radius-sm);
-  border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit;
-}
 .stepper { display: flex; align-items: center; gap: 4px; background: var(--surface-2); border-radius: 999px; padding: 4px; flex: none; }
 .stepper button { width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--surface-3); font-size: 1.3rem; cursor: pointer; }
 .stepper output { min-width: 52px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }

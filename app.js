@@ -20,6 +20,7 @@ const KEYS = {
   deleted: 'dehnapp.deleted.v1',
   meta: 'dehnapp.meta.v1',
   routinesCache: 'dehnapp.routines.cache.v1',
+  voiceIndex: 'dehnapp.voice.index.v1',
 };
 const SYNC_PATH = 'dehn.json';               // Verlauf im privaten GitHub-Daten-Repository
 const ROUTINES_PATH = 'dehn-routines.json';  // Routinen im selben Repository
@@ -34,7 +35,6 @@ const APP_DEFAULTS = {
   autoAdvanceRepExercises: true,
   sound: true,
   voice: true,
-  audioMode: 'auto', // iPad/iPhone: auto (Systemstandard) | ambient (parallel zu Video) | transient (Video kurz pausieren)
 };
 
 /* ---------- Speicher (localStorage, immer mit try/catch) ---------- */
@@ -140,24 +140,6 @@ function refreshCfg() {
   const overrides = store.get(KEYS.settings, {});
   cfg = { ...APP_DEFAULTS, ...(DATA?.settings || {}), ...(overrides && typeof overrides === 'object' ? overrides : {}) };
 }
-
-/**
- * Audio Session API (Safari/iPadOS 16.4+): wie sich Töne und Sprachansage zu anderem Audio verhalten.
- *  auto      → Systemstandard, wird nicht angefasst
- *  ambient   → parallel, ein Video im Bild-in-Bild soll weiterlaufen
- *  transient → anderes Audio pausiert kurz und soll danach weiterlaufen
- * Wird nur EINMAL beim Start gesetzt, bevor irgendein Ton läuft – ein Umstellen während
- * laufender Wiedergabe kann iPadOS den Ton der Seite komplett abwürgen lassen.
- */
-const hasAudioSession = 'audioSession' in navigator;
-const AUDIO_MODES = ['auto', 'ambient', 'transient'];
-function applyAudioSessionOnce() {
-  try {
-    if (hasAudioSession && cfg.audioMode !== 'auto' && AUDIO_MODES.includes(cfg.audioMode)) {
-      navigator.audioSession.type = cfg.audioMode;
-    }
-  } catch { /* optional */ }
-}
 function saveSetting(key, value) {
   const o = store.get(KEYS.settings, {}) || {};
   o[key] = value;
@@ -191,12 +173,19 @@ function spokenDose(ex) {
   if (ex.type === 'reps') return `${ex.reps} Wiederholungen${ex.perSide && ex.alternating ? ' je Seite' : ''}`;
   return `${ex.seconds} Sekunden`;
 }
-function announce(st) {
-  const parts = [st.ex.name];
-  if (st.side) parts.push(st.side);
-  if (st.sets > 1) parts.push(`Satz ${st.set} von ${st.sets}`);
-  parts.push(spokenDose(st.ex));
-  return parts.join(', ');
+/** Bausteine einer Ansage – müssen zu werkzeuge/ansagen-erzeugen.ps1 im Daten-Repository passen. */
+function announceParts(st) {
+  return [st.ex.name, st.side, st.sets > 1 ? `Satz ${st.set} von ${st.sets}` : null, spokenDose(st.ex)].filter(Boolean);
+}
+/** Was beim Betreten eines Schritts angesagt wird (oder null). */
+function stepParts(st, prev) {
+  switch (st.kind) {
+    case 'transition': return announceParts(st);
+    case 'switch': return ['Seitenwechsel', st.side];
+    case 'rest': return ['Satzpause', `${st.duration} Sekunden`];
+    case 'work': return !prev || prev.unit !== st.unit ? announceParts(st) : null; // ohne Übergang direkt ansagen
+    default: return null;
+  }
 }
 
 function workDuration(ex) {
@@ -554,8 +543,9 @@ function pickVoice() {
   } catch { deVoice = null; }
 }
 if (hasSpeech) { pickVoice(); speechSynthesis.addEventListener?.('voiceschanged', pickVoice); }
-function speak(text, force = false) {
-  if (!hasSpeech || (!cfg.voice && !force)) return;
+/** Ersatz: eingebaute Sprachausgabe (auf dem iPad pausiert sie laufende Videos). */
+function speakSynth(text) {
+  if (!hasSpeech) return;
   try {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
@@ -565,7 +555,164 @@ function speak(text, force = false) {
     speechSynthesis.speak(u);
   } catch { /* Sprache ist optional */ }
 }
-function stopSpeech() { try { if (hasSpeech) speechSynthesis.cancel(); } catch { /* egal */ } }
+
+/* ---------- Ansagen als Aufnahmen ----------
+ * Die Aufnahmen (dehn-audio/*.wav im privaten Daten-Repository) werden wie die Countdown-Töne
+ * über Web Audio abgespielt: Sie mischen sich mit Videos/Musik (Bild-in-Bild läuft weiter),
+ * richten sich nach der Medienlautstärke und werden für offline zwischengespeichert.
+ */
+const VOICE_DIR = 'dehn-audio';
+const VOICE_CACHE = 'dehn-ansagen-v1';
+const voice = { index: null, files: new Map(), decoded: new Map(), sources: [], seq: 0 };
+const voiceKey = (t) => String(t).trim().toLowerCase().replace(/\s+/g, ' ');
+const hasCacheApi = 'caches' in window;
+
+async function loadVoiceIndex() {
+  const gh = GHSync.getConfig();
+  if (gh && navigator.onLine !== false) {
+    try {
+      const r = await GHSync.readFile(gh, `${VOICE_DIR}/index.json`);
+      if (r?.data?.clips) { voice.index = r.data; store.set(KEYS.voiceIndex, r.data); }
+    } catch { /* offline oder noch keine Aufnahmen → Zwischenspeicher */ }
+  }
+  if (!voice.index) {
+    const cached = store.get(KEYS.voiceIndex, null);
+    if (cached?.clips) voice.index = cached;
+  }
+  if (voice.index) prefetchVoiceFiles();
+}
+
+/** Rohdaten einer Aufnahme: Zwischenspeicher → sonst von GitHub holen und ablegen. */
+function voiceFile(file) {
+  if (voice.files.has(file)) return voice.files.get(file);
+  const p = (async () => {
+    const req = new Request(`__ansagen/${file}`, { method: 'GET' });
+    if (hasCacheApi) {
+      try {
+        const hit = await (await caches.open(VOICE_CACHE)).match(req);
+        if (hit) return await hit.arrayBuffer();
+      } catch { /* weiter zu GitHub */ }
+    }
+    const gh = GHSync.getConfig();
+    if (!gh) throw new Error('Sync nicht eingerichtet');
+    const buf = await GHSync.readRaw(gh, `${VOICE_DIR}/${file}`);
+    if (hasCacheApi) {
+      try { await (await caches.open(VOICE_CACHE)).put(req, new Response(buf.slice(0), { headers: { 'Content-Type': 'audio/wav' } })); } catch { /* egal */ }
+    }
+    return buf;
+  })();
+  voice.files.set(file, p);
+  p.catch(() => voice.files.delete(file)); // beim nächsten Mal erneut versuchen
+  return p;
+}
+
+/** Lädt alle Aufnahmen im Hintergrund in den Zwischenspeicher (für offline) und räumt alte auf. */
+async function prefetchVoiceFiles() {
+  const files = [...new Set(Object.values(voice.index.clips))];
+  for (let i = 0; i < files.length; i += 4) {
+    await Promise.all(files.slice(i, i + 4).map((f) => voiceFile(f).catch(() => null)));
+  }
+  if (hasCacheApi) {
+    try {
+      const cache = await caches.open(VOICE_CACHE);
+      const keep = new Set(files);
+      for (const req of await cache.keys()) {
+        const name = req.url.split('/').pop();
+        if (!keep.has(name)) await cache.delete(req);
+      }
+    } catch { /* egal */ }
+  }
+}
+
+/** Dekodierte Aufnahme inkl. Beschnitt der Stille am Anfang/Ende. */
+function voiceClip(key) {
+  const file = voice.index?.clips?.[key];
+  if (!file || !actx) return Promise.resolve(null);
+  if (voice.decoded.has(file)) return voice.decoded.get(file);
+  const p = voiceFile(file)
+    .then((buf) => new Promise((ok, fail) => actx.decodeAudioData(buf.slice(0), ok, fail)))
+    .then((audio) => {
+      const data = audio.getChannelData(0);
+      const thr = 0.01;
+      let a = 0, b = data.length - 1;
+      while (a < b && Math.abs(data[a]) < thr) a++;
+      while (b > a && Math.abs(data[b]) < thr) b--;
+      const pad = Math.floor(audio.sampleRate * 0.02);
+      const start = Math.max(0, a - pad) / audio.sampleRate;
+      const end = Math.min(data.length, b + pad) / audio.sampleRate;
+      return { audio, start, dur: Math.max(0.05, end - start) };
+    })
+    .catch(() => { voice.decoded.delete(file); return null; });
+  voice.decoded.set(file, p);
+  return p;
+}
+const missingVoiceKeys = (parts) => parts.map(voiceKey).filter((k) => !voice.index?.clips?.[k]);
+
+/** Dekodiert alle Aufnahmen einer Routine vorab (beim Start der Einheit). */
+function prepareVoice(routine) {
+  if (!voice.index || !actx) return;
+  const steps = buildSteps(routine);
+  const keys = new Set(['geschafft']);
+  steps.forEach((st, i) => (stepParts(st, steps[i - 1]) || []).forEach((p) => keys.add(voiceKey(p))));
+  keys.forEach((k) => voiceClip(k));
+}
+
+/** Ansage abspielen: Aufnahmen hintereinander, sonst Ersatz über die eingebaute Sprachausgabe. */
+async function say(parts, force = false) {
+  if ((!cfg.voice && !force) || !parts?.length) return;
+  const seq = ++voice.seq;
+  if (voice.index && actx && missingVoiceKeys(parts).length === 0) {
+    const clips = await Promise.race([
+      Promise.all(parts.map((p) => voiceClip(voiceKey(p)))),
+      new Promise((r) => setTimeout(() => r(null), 2500)),
+    ]);
+    if (seq !== voice.seq) return;                // inzwischen neuere Ansage oder Pause
+    if (clips && clips.every(Boolean)) { playClips(clips); return; }
+  }
+  if (seq !== voice.seq) return;
+  speakSynth(parts.join(', '));
+}
+function playClips(clips) {
+  stopVoiceSources();
+  if (actx.state !== 'running') actx.resume().catch(() => {});
+  let t = actx.currentTime + 0.03;
+  const gain = actx.createGain();
+  gain.gain.value = 1;
+  gain.connect(actx.destination);
+  for (const c of clips) {
+    const src = actx.createBufferSource();
+    src.buffer = c.audio;
+    src.connect(gain);
+    src.start(t, c.start, c.dur);
+    voice.sources.push(src);
+    t += c.dur + 0.12;
+  }
+}
+function stopVoiceSources() {
+  for (const s of voice.sources) { try { s.stop(); } catch { /* schon zu Ende */ } }
+  voice.sources = [];
+}
+function stopSpeech() {
+  voice.seq++;
+  stopVoiceSources();
+  try { if (hasSpeech) speechSynthesis.cancel(); } catch { /* egal */ }
+}
+
+/** Alle Bausteine, die die aktuellen Routinen brauchen – für die Anzeige fehlender Aufnahmen. */
+function requiredVoiceKeys() {
+  const keys = new Set(['geschafft']);
+  for (const r of DATA?.routines || []) {
+    const steps = buildSteps(r);
+    steps.forEach((st, i) => (stepParts(st, steps[i - 1]) || []).forEach((p) => keys.add(voiceKey(p))));
+  }
+  return [...keys];
+}
+function voiceStatusText() {
+  if (!voice.index) return hasSpeech ? 'Browser-Stimme – pausiert auf dem iPad laufende Videos (Aufnahmen nicht geladen)' : 'Nicht verfügbar';
+  const missing = requiredVoiceKeys().filter((k) => !voice.index.clips[k]);
+  const base = `Aufnahmen (${voice.index.voice || 'Windows-Stimme'}) – laufen parallel zu Video/Musik`;
+  return missing.length ? `${base}. ${missing.length} fehlen, dafür Browser-Stimme: ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? ' …' : ''}` : base;
+}
 
 let wakeLock = null;
 async function requestWakeLock() {
@@ -600,6 +747,7 @@ function startRun(id) {
     waiting: false, lastBeep: null, finished: false, timer: null, raf: null,
   };
   requestWakeLock();
+  prepareVoice(routine); // Aufnahmen der Routine vorab dekodieren
   location.hash = `#/run/${encodeURIComponent(id)}`;
   renderPlayer();
   onStepEnter(false); // direkt im Klick-Handler, damit iOS Ton & Sprache erlaubt
@@ -661,24 +809,9 @@ function onStepEnter(silent) {
   if (!run || silent || run.pausedAt) return;
   const st = run.steps[run.i];
   const prev = run.steps[run.i - 1];
-  switch (st.kind) {
-    case 'transition':
-      sfx.soft();
-      speak(announce(st));
-      break;
-    case 'switch':
-      sfx.switchSide();
-      speak(`Seitenwechsel. ${cap(st.side)}.`);
-      break;
-    case 'rest':
-      sfx.rest();
-      speak(`Satzpause, ${st.duration} Sekunden.`);
-      break;
-    case 'work':
-      sfx.start();
-      if (!prev || prev.unit !== st.unit) speak(announce(st)); // ohne Übergang direkt ansagen
-      break;
-  }
+  ({ transition: sfx.soft, switch: sfx.switchSide, rest: sfx.rest, work: sfx.start })[st.kind]?.();
+  const parts = stepParts(st, prev);
+  if (parts) say(parts);
 }
 
 function goTo(i) {
@@ -770,7 +903,7 @@ function finishRun() {
   run = null;
   playerEls = null;
   sfx.done();
-  speak('Geschafft!');
+  say(['Geschafft']);
   history.replaceState(null, '', '#/done');
   route();
 }
@@ -1273,13 +1406,7 @@ function renderSettings() {
       ${stepperHtml('transitionSeconds', 'Übergangszeit', 'Zeit zum Positionieren vor jeder Übung', 5, 0, 60)}
       ${stepperHtml('sideSwitchSeconds', 'Seitenwechsel', 'Pause zwischen links und rechts', 1, 0, 20)}
       ${toggleHtml('sound', 'Töne', '3-2-1, Start, Seitenwechsel, Satzpause', '<button class="btn btn-ghost btn-sm" data-act="test-sound">Test</button>')}
-      ${toggleHtml('voice', 'Sprachansage', hasSpeech ? (deVoice ? `Stimme: ${esc(deVoice.name)}` : 'Deutsche Ansage der nächsten Übung') : 'Von diesem Browser nicht unterstützt', hasSpeech ? '<button class="btn btn-ghost btn-sm" data-act="test-voice">Test</button>' : '', !hasSpeech)}
-      ${hasAudioSession ? `<div class="set-row">
-        <div class="set-text"><div class="set-label">Bei Video/Musik nebenbei</div><div class="set-hint">Test-Modus – die App startet beim Umstellen neu. Klappt etwas nicht, zurück auf „Standard“.</div></div>
-        <select class="set-select" data-select-setting="audioMode" aria-label="Verhalten bei Video oder Musik">
-          ${[['auto', 'Standard'], ['ambient', 'Parallel'], ['transient', 'Kurz pausieren']].map(([v, l]) => `<option value="${v}" ${cfg.audioMode === v ? 'selected' : ''}>${l}</option>`).join('')}
-        </select>
-      </div>` : ''}
+      ${toggleHtml('voice', 'Sprachansage', esc(voiceStatusText()), '<button class="btn btn-ghost btn-sm" data-act="test-voice">Test</button>')}
       ${toggleHtml('autoAdvanceRepExercises', 'Auto-Weiter bei Wiederholungen', 'Aus: Nach der geschätzten Zeit wartet die App auf „Fertig“')}
       <div class="set-foot"><button class="btn btn-ghost btn-sm" data-act="reset-settings">Auf Standard zurücksetzen</button></div>
     </section>
@@ -1447,15 +1574,15 @@ app.addEventListener('click', async (e) => {
       break;
     }
     case 'test-sound': audioInit(); sfx.tick(); setTimeout(sfx.tick, 1000); setTimeout(sfx.start, 2000); break;
-    case 'test-voice': speak('Gleich: Übung, links, 60 Sekunden', true); break;
-    case 'reset-settings': {
-      const hadAudioMode = cfg.audioMode !== 'auto';
-      store.remove(KEYS.settings);
-      if (hadAudioMode) { location.reload(); break; } // Audio-Session zurück auf Systemstandard
-      refreshCfg();
-      renderSettings();
+    case 'test-voice': {
+      // Erste Ansage der ersten Routine abspielen – genau so wie im Training
+      audioInit();
+      const steps = DATA?.routines?.[0] ? buildSteps(DATA.routines[0]) : [];
+      const st = steps.find((s) => s.side) || steps[0];
+      say(st ? announceParts(st) : ['Geschafft'], true);
       break;
     }
+    case 'reset-settings': store.remove(KEYS.settings); refreshCfg(); renderSettings(); break;
     case 'export': if (await exportBackup()) { toast('Backup erstellt.'); renderSettings(); } break;
     case 'sync-connect': {
       el.disabled = true;
@@ -1468,6 +1595,7 @@ app.addEventListener('click', async (e) => {
       if (err) { toast(err); el.disabled = false; el.textContent = 'Verbinden'; return; }
       if (!GHSync.getConfig()) { el.disabled = false; el.textContent = 'Verbinden'; return; }
       await loadRoutines();
+      loadVoiceIndex(); // Ansage-Aufnahmen (im Hintergrund)
       route();
       toast(routinesError || (sync.status === 'ok' ? 'Verbunden und abgeglichen.' : sync.message || 'Verbunden.'));
       break;
@@ -1475,6 +1603,7 @@ app.addEventListener('click', async (e) => {
     case 'sync-now':
       await runSync();
       await loadRoutines(); // auch geänderte Routinen holen
+      loadVoiceIndex(); // Ansage-Aufnahmen (im Hintergrund)
       route();
       toast(routinesError || (sync.status === 'ok' ? 'Abgeglichen.' : sync.message));
       break;
@@ -1514,10 +1643,6 @@ app.addEventListener('click', async (e) => {
 app.addEventListener('change', async (e) => {
   const key = e.target.dataset?.setting;
   if (key) saveSetting(key, e.target.checked);
-  if (e.target.dataset?.selectSetting === 'audioMode') {
-    saveSetting('audioMode', e.target.value);
-    location.reload(); // Audio-Session darf nur vor dem ersten Ton gesetzt werden
-  }
   if (e.target.id === 'import-file' && e.target.files?.[0]) {
     const msg = await importBackup(e.target.files[0]);
     renderSettings();
@@ -1605,9 +1730,9 @@ function useRoutines(json, source) {
 
 async function init() {
   refreshCfg();
-  applyAudioSessionOnce(); // vor jedem Ton
   storageOk = checkStorage();
   await loadRoutines();
+  loadVoiceIndex(); // Ansage-Aufnahmen (im Hintergrund)
   if (storageOk) await requestPersist(getHistory().length > 0); // erst fragen, wenn es etwas zu schützen gibt
   window.addEventListener('hashchange', route);
   route();
