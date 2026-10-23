@@ -1,6 +1,6 @@
 // Service Worker: Network-first, damit Updates sofort ankommen – offline wird aus dem Cache geliefert.
 // Die Routinen liegen nicht hier, sondern privat bei GitHub (die App speichert sie selbst zwischen).
-const CACHE = 'dehnapp-v16';
+const CACHE = 'dehnapp-v17';
 const ASSETS = [
   './',
   'index.html',
@@ -8,6 +8,7 @@ const ASSETS = [
   'sync.js',
   'app.js',
   'gym.js',
+  'werte.js',
   'manifest.webmanifest',
   'icons/icon.svg',
   'icons/icon-192.png',

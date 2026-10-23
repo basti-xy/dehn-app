@@ -1115,11 +1115,6 @@ function renderDehnen() {
   </div>`;
 }
 
-/* ---------- Werte (Platzhalter bis Schritt 6) ---------- */
-function renderWerte() {
-  app.innerHTML = `<div class="page">${pageHead({ title: 'Werte' })}
-    <section class="card"><p class="muted">Leistungswerte folgen.</p></section></div>`;
-}
 
 function startLink(r, label = 'Los geht’s') {
   return `<a class="btn btn-primary btn-lg" href="#/routine/${encodeURIComponent(r.id)}">${ICONS.play}<span>${esc(label)}</span></a>`;
@@ -1872,6 +1867,8 @@ app.addEventListener('click', async (e) => {
       await runSync();
       await loadRoutines(); // auch geänderte Routinen holen
       await loadGymPlans();
+      await loadValues();
+      await loadTraining();
       loadVoiceIndex(); // Ansage-Aufnahmen (im Hintergrund)
       route();
       toast(routinesError || (sync.status === 'ok' ? 'Abgeglichen.' : sync.message));
@@ -1949,7 +1946,7 @@ document.addEventListener('visibilitychange', () => {
   if (run && !run.finished) { requestWakeLock(); tick(); return; }
   if (DATA) rerenderCurrent(); // Datumswechsel über Nacht
   if (DATA) scheduleSync(); // Änderungen von anderen Geräten holen
-  if (DATA) loadTraining();
+  if (DATA) { loadTraining(); loadGymPlans(); loadValues(); }
 });
 window.addEventListener('online', () => { if (DATA) scheduleSync(); });
 
@@ -2010,6 +2007,7 @@ async function init() {
   scheduleSync(0);
   loadTraining(); // Wochenübersicht (im Hintergrund)
   loadGymPlans(); // Gym-Pläne (gym.js, im Hintergrund)
+  loadValues(); // Werte (werte.js, im Hintergrund)
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }

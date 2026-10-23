@@ -558,3 +558,17 @@ body.has-tabbar .page { padding-bottom: calc(96px + var(--safe-bottom)); }
 .tw-gym.st-joker strong { color: var(--joker); }
 .tw-gym.st-missed strong { color: var(--flame); }
 .tw-gymlist { margin: 10px 0 0; }
+
+/* ---------- Werte ---------- */
+.values-group { padding: 14px 16px 6px; }
+.val-row { border-top: 1px solid var(--border); }
+.values-group .today-label + .val-row { border-top: 0; }
+.val-row > summary, .val-row.is-open { display: flex; align-items: center; gap: 12px; padding: 12px 0; list-style: none; }
+.val-row > summary::-webkit-details-marker { display: none; }
+.val-row:not([data-single]) > summary { cursor: pointer; }
+.val-main { flex: 1; min-width: 0; }
+.val-name { font-weight: 650; }
+.val-spark { flex: none; color: var(--accent); }
+.val-value { flex: none; text-align: right; white-space: nowrap; }
+.val-value strong { font-size: 1.35rem; font-weight: 800; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.val-hist { margin: 0 0 10px; padding: 0 0 0 4px; }
