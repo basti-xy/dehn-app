@@ -1,7 +1,10 @@
-# Routinen-App
+# Milon
 
-Statische Web-App (HTML/CSS/JS, kein Backend), die Schritt für Schritt durch Trainings-Routinen führt:
-Countdown bzw. Wiederholungen, Seitenwechsel, Satzpausen, Töne, deutsche Sprachansage, Streak.
+*Kleine Lasten, täglich getragen, werden zu großer Kraft.* – benannt nach Milon von Kroton, der der Sage nach jeden Tag
+ein Kalb trug, bis es ein ausgewachsener Stier war.
+
+Statische Web-App (HTML/CSS/JS, kein Build, kein Backend) für das eigene Training: Dehn-Routinen mit Timer und
+Sprachansagen, Gym-Tracking, Trainingswoche und Leistungswerte.
 
 Die **Routinen und der Verlauf liegen nicht in diesem Repository**, sondern in einem privaten Daten-Repository.
 Die App lädt sie über die GitHub-API mit einem persönlichen Token, den man pro Gerät einmal in der App einträgt.

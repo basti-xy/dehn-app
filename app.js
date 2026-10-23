@@ -1,10 +1,18 @@
 'use strict';
 
 /* =========================================================================
-   Routinen-App
-   Alle Übungen, der Zyklus und die Rollen einzelner Routinen (Wochen-Routine,
-   Extra-Vorschlag) kommen aus der Routinen-Datei – im Code steht nichts davon.
+   Milon – Trainings-App (Dehnen, Gym, Trainingswoche, Werte)
+   Alle Übungen, Pläne und Werte kommen aus dem privaten Daten-Repository –
+   im Code steht nichts Persönliches.
    ========================================================================= */
+
+const APP_NAME = 'Milon';
+const MOTTO = 'Kleine Lasten, täglich getragen, werden zu großer Kraft.';
+const LEGEND = [
+  'Milon von Kroton war der berühmteste Ringer der Antike: sechsmal Olympiasieger, dazu unzählige Siege bei den großen Spielen Griechenlands.',
+  'Der Sage nach trug er jeden Tag ein Kalb auf seinen Schultern. Das Kalb wuchs – und Milon mit ihm –, bis er eines Tages einen ausgewachsenen Stier trug.',
+  'Daher der Name: Jede Woche ein bisschen mehr. Die kleinen Schritte summieren sich zu etwas Großem.',
+];
 
 /* Rollen aus routines.json → "roles" */
 const weeklyRole = () => DATA?.roles?.weekly || null;   // { routine, weekday (0 = So), hint, cooldown }
@@ -1022,7 +1030,8 @@ function renderHome() {
     <header class="home-head">
       <div>
         <div class="eyebrow">${esc(now.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }))}</div>
-        <h1 class="home-title">Dehnen</h1>
+        <h1 class="home-title">${APP_NAME}</h1>
+        <p class="motto">${esc(MOTTO)}</p>
       </div>
       <a class="icon-btn has-dot" href="#/settings" aria-label="Einstellungen">${ICONS.settings}${GHSync.getConfig() ? `<i id="sync-dot" class="sync-dot s-${sync.status}" title="${esc(syncTitle())}"></i>` : ''}</a>
     </header>
@@ -1579,7 +1588,14 @@ function renderSettings() {
           <button class="icon-btn sm" data-act="del-entry" data-id="${esc(h.id)}" aria-label="Eintrag löschen">${ICONS.trash}</button>
         </li>`).join('')}</ul>` : '<p class="small muted">Noch keine Einheiten.</p>'}
     </section>
-    <p class="footnote">Alle Daten bleiben lokal auf diesem Gerät. Übungen änderst du in <code>routines.json</code>.</p>
+    <section class="card about">
+      <div class="about-head">
+        <img src="icons/icon.svg" alt="" class="about-logo">
+        <div><h2 class="card-title">Über ${APP_NAME}</h2><p class="motto">${esc(MOTTO)}</p></div>
+      </div>
+      ${LEGEND.map((p) => `<p class="small muted">${esc(p)}</p>`).join('')}
+    </section>
+    <p class="footnote">Pläne, Routinen und Verlauf liegen in deinem privaten Daten-Repository und auf diesem Gerät.</p>
   </div>`;
 }
 
@@ -1637,7 +1653,7 @@ function syncSectionHtml() {
 function renderSetup() {
   const isFile = location.protocol === 'file:';
   app.innerHTML = `<div class="page">
-    <header class="home-head"><div><h1 class="home-title">Dehnen</h1></div></header>
+    <header class="home-head"><div><h1 class="home-title">${APP_NAME}</h1><p class="motto">${esc(MOTTO)}</p></div></header>
     ${routinesError ? `<section class="card warn-card">${esc(routinesError)}</section>` : ''}
     <section class="card">
       <h2 class="card-title">Willkommen</h2>
