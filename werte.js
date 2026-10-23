@@ -25,7 +25,7 @@ async function loadValues() {
   } catch { /* ohne Datei oder offline bleibt der letzte Stand */ }
 }
 
-/** "3:54" → Sekunden; "1:21" mit Einheit h → Minuten*60; "1:21:30" → Sekunden */
+/** "4:30" → Sekunden; "1:45" mit Einheit h → Stunden:Minuten; "1:45:30" → Sekunden */
 function valueToNumber(item, v) {
   if (item.kind === 'number' || typeof v === 'number') return Number(v);
   const parts = String(v).split(':').map(Number);
