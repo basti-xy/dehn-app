@@ -78,10 +78,32 @@ code { font-size: .9em; background: var(--surface-2); padding: 1px 6px; border-r
 
 .home-head { display: flex; justify-content: space-between; align-items: flex-end; margin: 8px 0 16px; }
 .eyebrow { color: var(--muted); font-size: .9rem; }
-.home-title {
-  margin: 0; font-size: 2.1rem; letter-spacing: -.02em;
+.home-title { margin: 0; font-size: 2rem; letter-spacing: -.02em; }
+.home-title.is-brand {
+  font-size: 2.1rem;
   background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; color: transparent;
 }
+
+/* ---------- Untere Tab-Leiste ---------- */
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  padding: 6px max(8px, env(safe-area-inset-left, 0px)) calc(6px + var(--safe-bottom)) max(8px, env(safe-area-inset-right, 0px));
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+  border-top: 1px solid var(--border);
+}
+.tabbar[hidden] { display: none; }
+.tab {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  min-height: 52px; border-radius: 14px; color: var(--muted); font-size: .74rem; font-weight: 600;
+  max-width: 160px; width: 100%; justify-self: center;
+}
+.tab .ico { width: 24px; height: 24px; }
+.tab.is-active { color: var(--text); }
+.tab.is-active .ico { color: var(--accent); }
+.tab:active { background: var(--surface); }
+body.has-tabbar .page { padding-bottom: calc(96px + var(--safe-bottom)); }
 .motto { margin: 2px 0 0; color: var(--muted); font-size: .88rem; font-style: italic; }
 .about-head { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
 .about-head .card-title { margin: 0; }

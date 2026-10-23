@@ -134,6 +134,10 @@ const ICONS = {
   moon: svg('<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>'),
   trash: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
   shield: svg('<path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/>'),
+  tabToday: svg('<path d="M3.5 11L12 4l8.5 7"/><path d="M5.5 9.5V20h4.5v-5.5h4V20h4.5V9.5"/>'),
+  tabGym: svg('<path d="M6.5 7v10M17.5 7v10M3.5 9.5v5M20.5 9.5v5M6.5 12h11"/>'),
+  tabStretch: svg('<circle cx="12" cy="4.5" r="1.8"/><path d="M4.5 9.5l7.5 2 7.5-2M12 11.5v3.5l-4 5.5M12 15l4 5.5"/>'),
+  tabValues: svg('<path d="M3.5 3.5v17h17"/><path d="M7.5 15l4-4.5 3 3 5.5-6.5"/>'),
   soundOn: svg('<path d="M4 9.5v5h3.5L12 19V5L7.5 9.5z" fill="currentColor"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>'),
   soundOff: svg('<path d="M4 9.5v5h3.5L12 19V5L7.5 9.5z" fill="currentColor"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>'),
 };
@@ -379,10 +383,7 @@ function syncTitle() {
     + (last ? ` · zuletzt ${new Date(last).toLocaleString('de-DE', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '');
 }
 function refreshAfterSync() {
-  if (run || modalOpen() || !DATA) return;
-  const r = currentRoute().name;
-  if (r === 'home') renderHome();
-  else if (r === 'settings') renderSettings();
+  rerenderCurrent();
 }
 
 async function connectSync(owner, repo, token) {
@@ -972,8 +973,34 @@ function currentRoute() {
   return { name: name || 'home', arg: decodeURIComponent(arg) };
 }
 
-function route() {
+/* ---------- Hauptbereiche (untere Tab-Leiste) ---------- */
+const MAIN_TABS = [
+  { id: 'home', href: '#/', label: 'Heute', icon: 'tabToday' },
+  { id: 'gym', href: '#/gym', label: 'Gym', icon: 'tabGym' },
+  { id: 'dehnen', href: '#/dehnen', label: 'Dehnen', icon: 'tabStretch' },
+  { id: 'werte', href: '#/werte', label: 'Werte', icon: 'tabValues' },
+];
+const isMainTab = (name) => MAIN_TABS.some((t) => t.id === name);
+let lastMainHash = '#/'; // wohin "Zurück" aus Unterseiten führt
+const tabbarEl = document.getElementById('tabbar');
+function updateTabbar(name) {
+  const show = !!DATA && isMainTab(name) && !(run && !run.finished);
+  tabbarEl.hidden = !show;
+  document.body.classList.toggle('has-tabbar', show);
+  if (!show) return;
+  tabbarEl.innerHTML = MAIN_TABS.map((t) => `<a href="${t.href}" class="tab ${t.id === name ? 'is-active' : ''}" ${t.id === name ? 'aria-current="page"' : ''}>
+    ${ICONS[t.icon]}<span>${t.label}</span></a>`).join('');
+}
+/** Aktuelle Hauptseite neu zeichnen (z. B. nach Sync), ohne die Scrollposition zu verlieren. */
+function rerenderCurrent() {
+  if (run || modalOpen() || !DATA) return;
+  const n = currentRoute().name;
+  if (isMainTab(n) || n === 'settings') route({ keepScroll: true });
+}
+
+function route({ keepScroll = false } = {}) {
   const r = currentRoute();
+  updateTabbar(r.name);
   if (run && !run.finished) {
     if (r.name === 'run') { renderPlayer(); return; }
     // Zurück-Taste während einer Einheit: erst nachfragen
@@ -983,8 +1010,9 @@ function route() {
     return;
   }
   playerEls = null;
-  window.scrollTo(0, 0);
+  if (!keepScroll) window.scrollTo(0, 0);
   if (!DATA) { renderSetup(); return; }
+  if (isMainTab(r.name)) lastMainHash = location.hash || '#/';
   switch (r.name) {
     case 'routine': {
       const routine = routineById(r.arg);
@@ -1002,8 +1030,17 @@ function route() {
     case 'settings':
       renderSettings();
       return;
+    case 'dehnen':
+      renderDehnen();
+      return;
+    case 'gym':
+      renderGym();
+      return;
+    case 'werte':
+      renderWerte();
+      return;
     default:
-      renderHome();
+      renderToday();
   }
 }
 function redirect(hash) { history.replaceState(null, '', hash); route(); }
@@ -1019,36 +1056,68 @@ function topbar({ title = '', backHref = null, right = '' } = {}) {
   </header>`;
 }
 
-/* ---------- Startseite ---------- */
-function renderHome() {
-  const hist = getHistory();
-  const now = new Date();
-  const s = computeStreak(hist, now);
-  const a = computeWeekly(hist, now);
-  app.innerHTML = `
-  <div class="page">
-    <header class="home-head">
+/* ---------- Kopf der Hauptseiten ---------- */
+function pageHead({ title, brand = false, now = new Date() }) {
+  return `<header class="home-head">
       <div>
         <div class="eyebrow">${esc(now.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }))}</div>
-        <h1 class="home-title">${APP_NAME}</h1>
-        <p class="motto">${esc(MOTTO)}</p>
+        <h1 class="home-title ${brand ? 'is-brand' : ''}">${esc(title)}</h1>
+        ${brand ? `<p class="motto">${esc(MOTTO)}</p>` : ''}
       </div>
       <a class="icon-btn has-dot" href="#/settings" aria-label="Einstellungen">${ICONS.settings}${GHSync.getConfig() ? `<i id="sync-dot" class="sync-dot s-${sync.status}" title="${esc(syncTitle())}"></i>` : ''}</a>
     </header>
     ${storageOk ? '' : `<section class="card warn-card">
       <strong>Speichern nicht möglich.</strong> Dieser Browser blockiert den lokalen Speicher (z. B. privates Fenster).
       Streak und Verlauf gehen beim Schließen verloren.
-    </section>`}
+    </section>`}`;
+}
+
+/* ---------- Heute ---------- */
+function renderToday() {
+  const hist = getHistory();
+  const now = new Date();
+  const s = computeStreak(hist, now);
+  const a = computeWeekly(hist, now);
+  app.innerHTML = `
+  <div class="page">
+    ${pageHead({ title: APP_NAME, brand: true, now })}
     ${todayHtml(s, a, now)}
+    ${gymTodayHtml(now)}
     ${trainingHtml()}
+    ${backupReminderHtml(hist, now)}
+  </div>`;
+}
+
+/* ---------- Dehnen (die bisherige Startseite) ---------- */
+function renderDehnen() {
+  const hist = getHistory();
+  const now = new Date();
+  const s = computeStreak(hist, now);
+  const a = computeWeekly(hist, now);
+  app.innerHTML = `
+  <div class="page">
+    ${pageHead({ title: 'Dehnen', now })}
+    ${todayHtml(s, a, now)}
     ${streakHtml(s, a, now)}
     ${weeklyHtml(a, now)}
-    ${backupReminderHtml(hist, now)}
     <section class="section">
       <h2 class="section-title">Alle Routinen</h2>
       <div class="routine-list">${DATA.routines.map(routineRowHtml).join('')}</div>
     </section>
   </div>`;
+}
+
+/* ---------- Gym (Platzhalter bis Schritt 3) ---------- */
+function gymTodayHtml() { return ''; }
+function renderGym() {
+  app.innerHTML = `<div class="page">${pageHead({ title: 'Gym' })}
+    <section class="card"><p class="muted">Gym-Tracking folgt.</p></section></div>`;
+}
+
+/* ---------- Werte (Platzhalter bis Schritt 6) ---------- */
+function renderWerte() {
+  app.innerHTML = `<div class="page">${pageHead({ title: 'Werte' })}
+    <section class="card"><p class="muted">Leistungswerte folgen.</p></section></div>`;
 }
 
 function startLink(r, label = 'Los geht’s') {
@@ -1225,7 +1294,7 @@ async function loadTraining() {
     if (!r || !Array.isArray(r.data?.weeks)) return;
     const before = JSON.stringify(trainingData());
     store.set(KEYS.trainingCache, r.data);
-    if (JSON.stringify(r.data) !== before && DATA && !run && !modalOpen() && currentRoute().name === 'home') renderHome();
+    if (JSON.stringify(r.data) !== before && currentRoute().name === 'home') rerenderCurrent();
   } catch { /* Übersicht ist optional – ohne Datei oder offline bleibt der letzte Stand */ }
 }
 
@@ -1298,7 +1367,7 @@ function renderOverview(r) {
   const total = totalDuration(r);
   app.innerHTML = `
   <div class="page page-overview">
-    ${topbar({ backHref: '#/', title: '' })}
+    ${topbar({ backHref: lastMainHash, title: '' })}
     <h1 class="ov-title">${esc(r.name)}</h1>
     <div class="ov-meta"><span>${ICONS.clock}${fmtDuration(total)}</span><span>${r.exercises.length} ${plural(r.exercises.length, 'Übung', 'Übungen')}</span></div>
     ${r.description ? `<p class="ov-desc">${esc(r.description)}</p>` : ''}
@@ -1539,7 +1608,7 @@ function renderSettings() {
   const tKey = todayKey();
   app.innerHTML = `
   <div class="page">
-    ${topbar({ backHref: '#/', title: 'Einstellungen' })}
+    ${topbar({ backHref: lastMainHash, title: 'Einstellungen' })}
     <section class="card settings">
       ${stepperHtml('transitionSeconds', 'Übergangszeit', 'Zeit zum Positionieren vor jeder Übung', 5, 0, 60)}
       ${stepperHtml('sideSwitchSeconds', 'Seitenwechsel', 'Pause zwischen links und rechts', 1, 0, 20)}
@@ -1839,7 +1908,7 @@ document.addEventListener('keyup', (e) => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   if (run && !run.finished) { requestWakeLock(); tick(); return; }
-  if (DATA && currentRoute().name === 'home') renderHome(); // Datumswechsel über Nacht
+  if (DATA) rerenderCurrent(); // Datumswechsel über Nacht
   if (DATA) scheduleSync(); // Änderungen von anderen Geräten holen
   if (DATA) loadTraining();
 });
