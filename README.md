@@ -17,6 +17,8 @@ Hier liegt nur der Programmcode.
 | `dehn-routines.json` | Routinen, Zyklus, Rollen (siehe unten) |
 | `dehn.json` | Verlauf, wird von der App geschrieben |
 | `dehn-audio/` | Sprachansagen als WAV-Bausteine plus `index.json` (Text → Datei) |
+| `gym-plans.json` | Gym-Pläne: Splits mit Übungen (id, Block, Sätze, Wdh., kg, Schrittweite) und Wochenziel |
+| `gym.json` | Gym-Protokoll, wird von der App geschrieben (Sync + Merge pro Einheit, Löschmarkierungen) |
 | `training/weekly.json` | Trainingswoche für die Karte auf der Startseite (Stunden, Umfang je Sportart, Erholung, Erkenntnisse), optional |
 
 Die Ansagen werden wie die Countdown-Töne über Web Audio abgespielt. Dadurch mischen sie sich mit anderem Audio

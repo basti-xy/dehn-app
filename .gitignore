@@ -2,3 +2,6 @@
 routines.json
 *backup*.json
 start.cmd
+
+# lokale Testdaten (nie hochladen)
+.local/

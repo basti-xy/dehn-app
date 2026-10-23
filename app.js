@@ -266,8 +266,8 @@ function deleteHistoryEntry(id) {
 /* ---------- Backup (Export / Import) ---------- */
 async function exportBackup() {
   const now = new Date();
-  const data = { app: 'dehnapp', version: 1, exportedAt: now.toISOString(), history: getHistory(), deleted: getDeleted() };
-  const name = `dehn-backup-${dayKey(now)}.json`;
+  const data = { app: 'dehnapp', version: 1, exportedAt: now.toISOString(), history: getHistory(), deleted: getDeleted(), gym: gymSnapshot() };
+  const name = `milon-backup-${dayKey(now)}.json`;
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   // Auf dem Handy über das Teilen-Menü (Dateien, Drive, Mail …), am PC als Download
   const touch = window.matchMedia?.('(pointer: coarse)').matches;
@@ -358,9 +358,11 @@ async function runSync() {
     setHistory(merged.history);
     store.set(KEYS.deleted, merged.deleted);
     if (snapshotKey(merged) !== snapshotKey(res.data)) sync.again = true;
+    // Gym-Protokoll (gym.js) – gleiches Muster, eigene Datei
+    const gymChanged = typeof syncGymLog === 'function' ? await syncGymLog() : false;
     saveMeta({ lastSyncAt: new Date().toISOString() });
     setSyncStatus('ok', '');
-    if (snapshotKey(merged) !== before) refreshAfterSync();
+    if (snapshotKey(merged) !== before || gymChanged) refreshAfterSync();
   } catch (e) {
     const code = e?.code || 'other';
     setSyncStatus(code === 'network' ? 'offline' : 'error', e?.message || 'Unbekannter Fehler beim Abgleich.');
@@ -417,10 +419,14 @@ async function importBackup(file) {
     return 'Die Datei ist kein gültiges Backup (kein JSON).';
   }
   const list = Array.isArray(data) ? data : data?.history;
-  if (!Array.isArray(list)) return 'Die Datei enthält keinen Verlauf.';
-  const { added, ok } = mergeHistory(list);
+  const gymAdded = data?.gym ? importGymSnapshot(data.gym) : 0; // gym.js
+  if (!Array.isArray(list) && !data?.gym) return 'Die Datei enthält keinen Verlauf.';
+  const { added, ok } = Array.isArray(list) ? mergeHistory(list) : { added: 0, ok: true };
   if (!ok) return 'Speichern fehlgeschlagen – der Browser blockiert den lokalen Speicher.';
-  return added ? `${added} ${plural(added, 'Einheit', 'Einheiten')} importiert.` : 'Nichts Neues – alle Einträge waren schon vorhanden.';
+  const parts = [];
+  if (added) parts.push(`${added} ${plural(added, 'Dehneinheit', 'Dehneinheiten')}`);
+  if (gymAdded) parts.push(`${gymAdded} ${plural(gymAdded, 'Gym-Einheit', 'Gym-Einheiten')}`);
+  return parts.length ? `${parts.join(' und ')} importiert.` : 'Nichts Neues – alle Einträge waren schon vorhanden.';
 }
 
 /**
@@ -969,8 +975,8 @@ function finishRun() {
    ========================================================================= */
 function currentRoute() {
   const h = location.hash.replace(/^#\/?/, '');
-  const [name = '', arg = ''] = h.split('/');
-  return { name: name || 'home', arg: decodeURIComponent(arg) };
+  const [name = '', arg = '', arg2 = ''] = h.split('/');
+  return { name: name || 'home', arg: decodeURIComponent(arg), arg2: decodeURIComponent(arg2) };
 }
 
 /* ---------- Hauptbereiche (untere Tab-Leiste) ---------- */
@@ -983,8 +989,8 @@ const MAIN_TABS = [
 const isMainTab = (name) => MAIN_TABS.some((t) => t.id === name);
 let lastMainHash = '#/'; // wohin "Zurück" aus Unterseiten führt
 const tabbarEl = document.getElementById('tabbar');
-function updateTabbar(name) {
-  const show = !!DATA && isMainTab(name) && !(run && !run.finished);
+function updateTabbar(name, arg = '') {
+  const show = !!DATA && isMainTab(name) && !arg && !(run && !run.finished); // Unterseiten (z. B. #/gym/log/…) ohne Leiste
   tabbarEl.hidden = !show;
   document.body.classList.toggle('has-tabbar', show);
   if (!show) return;
@@ -994,13 +1000,15 @@ function updateTabbar(name) {
 /** Aktuelle Hauptseite neu zeichnen (z. B. nach Sync), ohne die Scrollposition zu verlieren. */
 function rerenderCurrent() {
   if (run || modalOpen() || !DATA) return;
-  const n = currentRoute().name;
-  if (isMainTab(n) || n === 'settings') route({ keepScroll: true });
+  const { name: n, arg } = currentRoute();
+  // Unterseiten mit Eingaben (Gym erfassen) nicht neu zeichnen, sonst gingen Eingaben verloren
+  if ((isMainTab(n) && !arg) || n === 'settings') route({ keepScroll: true });
 }
 
 function route({ keepScroll = false } = {}) {
   const r = currentRoute();
-  updateTabbar(r.name);
+  updateTabbar(r.name, r.arg);
+  if (typeof leaveGymPage === 'function') leaveGymPage(r); // Timer der Erfassen-Seite beenden
   if (run && !run.finished) {
     if (r.name === 'run') { renderPlayer(); return; }
     // Zurück-Taste während einer Einheit: erst nachfragen
@@ -1012,7 +1020,7 @@ function route({ keepScroll = false } = {}) {
   playerEls = null;
   if (!keepScroll) window.scrollTo(0, 0);
   if (!DATA) { renderSetup(); return; }
-  if (isMainTab(r.name)) lastMainHash = location.hash || '#/';
+  if (isMainTab(r.name) && !r.arg) lastMainHash = location.hash || '#/';
   switch (r.name) {
     case 'routine': {
       const routine = routineById(r.arg);
@@ -1034,7 +1042,7 @@ function route({ keepScroll = false } = {}) {
       renderDehnen();
       return;
     case 'gym':
-      renderGym();
+      renderGymRoute(r); // gym.js
       return;
     case 'werte':
       renderWerte();
@@ -1105,13 +1113,6 @@ function renderDehnen() {
       <div class="routine-list">${DATA.routines.map(routineRowHtml).join('')}</div>
     </section>
   </div>`;
-}
-
-/* ---------- Gym (Platzhalter bis Schritt 3) ---------- */
-function gymTodayHtml() { return ''; }
-function renderGym() {
-  app.innerHTML = `<div class="page">${pageHead({ title: 'Gym' })}
-    <section class="card"><p class="muted">Gym-Tracking folgt.</p></section></div>`;
 }
 
 /* ---------- Werte (Platzhalter bis Schritt 6) ---------- */
@@ -1774,6 +1775,7 @@ app.addEventListener('click', async (e) => {
   const el = e.target.closest('[data-act]');
   if (!el) return;
   const act = el.dataset.act;
+  if (act.startsWith('gym-')) { handleGymAction(act, el); return; } // gym.js
   switch (act) {
     case 'start': startRun(el.dataset.id); break;
     case 'toggle': togglePause(); el.blur(); break;
@@ -1833,6 +1835,7 @@ app.addEventListener('click', async (e) => {
     case 'sync-now':
       await runSync();
       await loadRoutines(); // auch geänderte Routinen holen
+      await loadGymPlans();
       loadVoiceIndex(); // Ansage-Aufnahmen (im Hintergrund)
       route();
       toast(routinesError || (sync.status === 'ok' ? 'Abgeglichen.' : sync.message));
@@ -1970,6 +1973,7 @@ async function init() {
   route();
   scheduleSync(0);
   loadTraining(); // Wochenübersicht (im Hintergrund)
+  loadGymPlans(); // Gym-Pläne (gym.js, im Hintergrund)
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
