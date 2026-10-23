@@ -483,7 +483,7 @@ function drawGymLog() {
       ${g.items.map(exerciseLogHtml).join('')}
     </section>`).join('')}
     ${hiddenCount && !d.showMore ? `<button class="btn btn-ghost gl-more" data-act="gym-more">Optional und Ersatz anzeigen (${hiddenCount})</button>` : ''}
-    <label class="gl-note">Notiz<textarea data-gym-field="note" rows="2" placeholder="z. B. Beine schwer nach dem Long Run">${esc(d.note)}</textarea></label>
+    <label class="gl-note">Notiz<textarea data-gym-field="note" rows="2" placeholder="z. B. wie es lief, Technik, Gefühl">${esc(d.note)}</textarea></label>
     ${d.sessionId ? `<button class="btn btn-ghost gl-delete" data-act="gym-delete">${ICONS.trash}<span>Einheit löschen</span></button>` : ''}
     <div class="start-bar"><button class="btn btn-primary btn-xl" data-act="gym-save">${ICONS.check}<span>Speichern</span></button></div>
   </div>`;
