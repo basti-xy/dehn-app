@@ -420,3 +420,26 @@ code { font-size: .9em; background: var(--surface-2); padding: 1px 6px; border-r
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---------- Trainingswoche ---------- */
+.training-week .tw-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-top: 6px; }
+.tw-hours { font-size: 2.2rem; font-weight: 800; letter-spacing: -.02em; line-height: 1.1; }
+.tw-hours span { font-size: 1rem; font-weight: 500; color: var(--muted); }
+.tw-bars { display: flex; align-items: flex-end; gap: 4px; height: 44px; flex: none; }
+.tw-bar { width: 9px; border-radius: 3px 3px 1px 1px; background: var(--surface-3); }
+.tw-bar.is-now { background: var(--accent); }
+.tw-headline { margin: 14px 0 6px; font-weight: 650; }
+.tw-list { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 8px; }
+.tw-ins { display: grid; grid-template-columns: 18px 1fr; gap: 6px; font-size: .95rem; }
+.tw-mark { font-weight: 800; text-align: center; }
+.t-good .tw-mark { color: var(--accent); }
+.t-bad .tw-mark { color: var(--danger); }
+.t-info .tw-mark { color: var(--muted); }
+.t-next .tw-mark, .t-next strong { color: var(--flame-2); }
+.tw-sports { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 8px; margin-top: 14px; }
+.tw-sport { display: grid; gap: 1px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); font-size: .85rem; }
+.tw-sport strong { font-size: 1.05rem; }
+.tw-rec { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.tw-sep { color: var(--muted); margin: 0 4px; }
+.tw-up { color: var(--accent); margin-left: 2px; }
+.tw-down { color: var(--flame); margin-left: 2px; }

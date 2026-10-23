@@ -21,9 +21,11 @@ const KEYS = {
   meta: 'dehnapp.meta.v1',
   routinesCache: 'dehnapp.routines.cache.v1',
   voiceIndex: 'dehnapp.voice.index.v1',
+  trainingCache: 'dehnapp.training.cache.v1',
 };
 const SYNC_PATH = 'dehn.json';               // Verlauf im privaten GitHub-Daten-Repository
 const ROUTINES_PATH = 'dehn-routines.json';  // Routinen im selben Repository
+const TRAINING_PATH = 'training/weekly.json'; // Wochenübersicht Training (wird von der Auswertung geschrieben)
 let routinesSource = null; // github | local | cache
 let routinesError = null;
 const BACKUP_REMINDER_DAYS = 30;
@@ -1029,6 +1031,7 @@ function renderHome() {
       Streak und Verlauf gehen beim Schließen verloren.
     </section>`}
     ${todayHtml(s, a, now)}
+    ${trainingHtml()}
     ${streakHtml(s, a, now)}
     ${weeklyHtml(a, now)}
     ${backupReminderHtml(hist, now)}
@@ -1187,6 +1190,76 @@ function weeklyHtml(a, now) {
       <div class="pill ${a.doneThisWeek ? 'ok' : ''}">${a.doneThisWeek ? `${ICONS.check}<span>Diese Woche</span>` : '<span>Diese Woche offen</span>'}</div>
     </div>
     <p class="small muted">Rekord ${a.best} · zählt, wenn du mindestens einmal pro Woche ${esc(weeklyName())} machst.</p>
+  </section>`;
+}
+
+/* ---------- Trainingswoche (aus training/weekly.json im Daten-Repository) ---------- */
+const fmtHours = (h) => { const m = Math.round((h || 0) * 60); return `${Math.floor(m / 60)}:${pad2(m % 60)}`; };
+const fmtNum = (n, d = 1) => (n == null ? '–' : Number(n).toLocaleString('de-DE', { maximumFractionDigits: d }));
+const fmtRange = (from, to) => {
+  const a = parseDay(from); const b = parseDay(to);
+  return `${a.getDate()}.${a.getMonth() + 1 === b.getMonth() + 1 ? '' : `${a.getMonth() + 1}.`}–${b.getDate()}.${b.getMonth() + 1}.`;
+};
+const SPORT_LABELS = { swim: 'Schwimmen', bike: 'Rad', run: 'Laufen', gym: 'Gym' };
+const INSIGHT_MARK = { good: '✓', bad: '✗', info: '•', next: '→' };
+
+function trainingData() {
+  const d = store.get(KEYS.trainingCache, null);
+  return d && Array.isArray(d.weeks) && d.weeks.length ? d : null;
+}
+
+async function loadTraining() {
+  const c = GHSync.getConfig();
+  if (!c || navigator.onLine === false) return;
+  try {
+    const r = await GHSync.readFile(c, TRAINING_PATH);
+    if (!r || !Array.isArray(r.data?.weeks)) return;
+    const before = JSON.stringify(trainingData());
+    store.set(KEYS.trainingCache, r.data);
+    if (JSON.stringify(r.data) !== before && DATA && !run && !modalOpen() && currentRoute().name === 'home') renderHome();
+  } catch { /* Übersicht ist optional – ohne Datei oder offline bleibt der letzte Stand */ }
+}
+
+function trainingHtml() {
+  const d = trainingData();
+  if (!d) return '';
+  const w = d.weeks[0];
+  const kw = Number(w.week.split('-W')[1]);
+  const delta = w.hours_prev4 ? Math.round((w.hours / w.hours_prev4 - 1) * 100) : null;
+  const bars = d.weeks.slice(0, 8).reverse();
+  const maxH = Math.max(...bars.map((b) => b.hours || 0), 1);
+  const barsHtml = bars.map((b) => `<div class="tw-bar ${b.week === w.week ? 'is-now' : ''}" style="height:${Math.max(4, Math.round((b.hours / maxH) * 100))}%" title="KW ${Number(b.week.split('-W')[1])}: ${fmtHours(b.hours)} h"></div>`).join('');
+  const sports = ['swim', 'bike', 'run', 'gym'].filter((k) => w.sports?.[k]).map((k) => {
+    const s = w.sports[k];
+    const main = k === 'gym' ? `${s.n}×` : `${fmtNum(s.km, k === 'bike' ? 0 : 1)} km`;
+    return `<div class="tw-sport"><span class="muted">${SPORT_LABELS[k]}</span><strong>${main}</strong><span class="muted small">${k === 'gym' ? '' : `${fmtHours(s.h)} h · `}${s.n}×</span></div>`;
+  }).join('');
+  const r = w.recovery || {};
+  const arrow = (now, prev, higherIsGood) => {
+    if (now == null || prev == null || Math.abs(now - prev) < 1) return '';
+    const up = now > prev;
+    return `<span class="${up === higherIsGood ? 'tw-up' : 'tw-down'}" title="ggü. den 4 Wochen davor">${up ? '↑' : '↓'}</span>`;
+  };
+  const rec = [
+    r.hrv != null ? `HRV <strong>${Math.round(r.hrv)}</strong>${arrow(r.hrv, r.hrv_prev4, true)}` : '',
+    r.rhr != null ? `Ruhepuls <strong>${Math.round(r.rhr)}</strong>${arrow(r.rhr, r.rhr_prev4, false)}` : '',
+    r.sleep_h != null ? `Schlaf <strong>${fmtNum(r.sleep_h)} h</strong>` : '',
+  ].filter(Boolean).join('<span class="tw-sep">·</span>');
+  const insights = (w.insights || []).map((i) =>
+    `<li class="tw-ins t-${esc(i.type)}"><span class="tw-mark" aria-hidden="true">${INSIGHT_MARK[i.type] || '•'}</span><span>${i.type === 'next' ? '<strong>Folgerung:</strong> ' : ''}${esc(i.text)}</span></li>`).join('');
+  return `<section class="card training-week">
+    <div class="today-label">Trainingswoche · KW ${kw} · ${esc(fmtRange(w.from, w.to))}</div>
+    <div class="tw-top">
+      <div>
+        <div class="tw-hours">${fmtHours(w.hours)} <span>h</span></div>
+        ${w.hours_prev4 ? `<div class="small muted">Ø ${fmtHours(w.hours_prev4)} h in den 4 Wochen davor${delta ? ` (${delta > 0 ? '+' : '−'}${Math.abs(delta)} %)` : ''}</div>` : ''}
+      </div>
+      <div class="tw-bars" role="img" aria-label="Trainingsstunden der letzten ${bars.length} Wochen">${barsHtml}</div>
+    </div>
+    ${w.headline ? `<p class="tw-headline">${esc(w.headline)}</p>` : ''}
+    ${insights ? `<ul class="tw-list">${insights}</ul>` : ''}
+    ${sports ? `<div class="tw-sports">${sports}</div>` : ''}
+    ${rec ? `<div class="tw-rec small">${rec}</div>` : ''}
   </section>`;
 }
 
@@ -1752,6 +1825,7 @@ document.addEventListener('visibilitychange', () => {
   if (run && !run.finished) { requestWakeLock(); tick(); return; }
   if (DATA && currentRoute().name === 'home') renderHome(); // Datumswechsel über Nacht
   if (DATA) scheduleSync(); // Änderungen von anderen Geräten holen
+  if (DATA) loadTraining();
 });
 window.addEventListener('online', () => { if (DATA) scheduleSync(); });
 
@@ -1810,6 +1884,7 @@ async function init() {
   window.addEventListener('hashchange', route);
   route();
   scheduleSync(0);
+  loadTraining(); // Wochenübersicht (im Hintergrund)
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }

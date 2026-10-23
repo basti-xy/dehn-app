@@ -14,6 +14,7 @@ Hier liegt nur der Programmcode.
 | `dehn-routines.json` | Routinen, Zyklus, Rollen (siehe unten) |
 | `dehn.json` | Verlauf, wird von der App geschrieben |
 | `dehn-audio/` | Sprachansagen als WAV-Bausteine plus `index.json` (Text → Datei) |
+| `training/weekly.json` | Trainingswoche für die Karte auf der Startseite (Stunden, Umfang je Sportart, Erholung, Erkenntnisse), optional |
 
 Die Ansagen werden wie die Countdown-Töne über Web Audio abgespielt. Dadurch mischen sie sich mit anderem Audio
 (ein Video im Bild-in-Bild läuft weiter) und folgen der Medienlautstärke. Fehlt ein Baustein, nutzt die App die
