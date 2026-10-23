@@ -1299,20 +1299,24 @@ async function loadTraining() {
   } catch { /* Übersicht ist optional – ohne Datei oder offline bleibt der letzte Stand */ }
 }
 
+let trainingIdx = 0; // 0 = neueste Woche in weekly.json, höher = ältere Wochen
+
 function trainingHtml() {
   const d = trainingData();
   if (!d) return '';
-  const w = d.weeks[0];
+  const idx = Math.max(0, Math.min(trainingIdx, d.weeks.length - 1));
+  const w = d.weeks[idx];
   const kw = Number(w.week.split('-W')[1]);
   const delta = w.hours_prev4 ? Math.round((w.hours / w.hours_prev4 - 1) * 100) : null;
-  const bars = d.weeks.slice(0, 8).reverse();
+  const bars = d.weeks.slice(0, 12).reverse();
   const maxH = Math.max(...bars.map((b) => b.hours || 0), 1);
-  const barsHtml = bars.map((b) => `<div class="tw-bar ${b.week === w.week ? 'is-now' : ''}" style="height:${Math.max(4, Math.round((b.hours / maxH) * 100))}%" title="KW ${Number(b.week.split('-W')[1])}: ${fmtHours(b.hours)} h"></div>`).join('');
-  const sports = ['swim', 'bike', 'run', 'gym'].filter((k) => w.sports?.[k]).map((k) => {
+  const barsHtml = bars.map((b) => `<button class="tw-bar ${b.week === w.week ? 'is-now' : ''}" data-act="tw-week" data-i="${d.weeks.indexOf(b)}" style="height:${Math.max(4, Math.round((b.hours / maxH) * 100))}%" title="KW ${Number(b.week.split('-W')[1])}: ${fmtHours(b.hours)} h" aria-label="KW ${Number(b.week.split('-W')[1])} anzeigen"></button>`).join('');
+  // Gym zählt nur aus Milon (gym.json) – Garmin-Krafttraining wird nicht verwendet
+  const gym = typeof gymWeekSummary === 'function' ? gymWeekSummary(w.from, w.to) : null;
+  const sports = ['swim', 'bike', 'run'].filter((k) => w.sports?.[k]).map((k) => {
     const s = w.sports[k];
-    const main = k === 'gym' ? `${s.n}×` : `${fmtNum(s.km, k === 'bike' ? 0 : 1)} km`;
-    return `<div class="tw-sport"><span class="muted">${SPORT_LABELS[k]}</span><strong>${main}</strong><span class="muted small">${k === 'gym' ? '' : `${fmtHours(s.h)} h · `}${s.n}×</span></div>`;
-  }).join('');
+    return `<div class="tw-sport"><span class="muted">${SPORT_LABELS[k]}</span><strong>${fmtNum(s.km, k === 'bike' ? 0 : 1)} km</strong><span class="muted small">${fmtHours(s.h)} h · ${s.n}×</span></div>`;
+  }).join('') + (gym ? `<div class="tw-sport tw-gym st-${gym.status}"><span class="muted">Gym</span><strong>${gym.n}/${gym.target}</strong><span class="muted small">${esc(gym.statusLabel)}</span></div>` : '');
   const r = w.recovery || {};
   const arrow = (now, prev, higherIsGood) => {
     if (now == null || prev == null || Math.abs(now - prev) < 1) return '';
@@ -1326,8 +1330,12 @@ function trainingHtml() {
   ].filter(Boolean).join('<span class="tw-sep">·</span>');
   const insights = (w.insights || []).map((i) =>
     `<li class="tw-ins t-${esc(i.type)}"><span class="tw-mark" aria-hidden="true">${INSIGHT_MARK[i.type] || '•'}</span><span>${i.type === 'next' ? '<strong>Folgerung:</strong> ' : ''}${esc(i.text)}</span></li>`).join('');
-  return `<section class="card training-week">
-    <div class="today-label">Trainingswoche · KW ${kw} · ${esc(fmtRange(w.from, w.to))}</div>
+  return `<section class="card training-week" id="training-card">
+    <div class="tw-head">
+      <button class="icon-btn sm" data-act="tw-prev" aria-label="Ältere Woche" ${idx >= d.weeks.length - 1 ? 'disabled' : ''}>${ICONS.back}</button>
+      <div class="today-label">Trainingswoche · KW ${kw} · ${esc(fmtRange(w.from, w.to))}</div>
+      <button class="icon-btn sm" data-act="tw-next" aria-label="Neuere Woche" ${idx === 0 ? 'disabled' : ''}>${ICONS.chevron}</button>
+    </div>
     <div class="tw-top">
       <div>
         <div class="tw-hours">${fmtHours(w.hours)} <span>h</span></div>
@@ -1338,9 +1346,34 @@ function trainingHtml() {
     ${w.headline ? `<p class="tw-headline">${esc(w.headline)}</p>` : ''}
     ${insights ? `<ul class="tw-list">${insights}</ul>` : ''}
     ${sports ? `<div class="tw-sports">${sports}</div>` : ''}
+    ${gym?.sessions.length ? `<p class="tw-gymlist small muted">Gym: ${gym.sessions.map((s) => esc(`${fmtDate(s.date)} ${s.splitName}`)).join(' · ')}</p>` : ''}
+    ${gym ? `<p class="tw-gymlist small">Gym-Streak <strong>${gym.streak} ${plural(gym.streak, 'Woche', 'Wochen')}</strong> <span class="muted">· Rekord ${gym.best}</span></p>` : ''}
     ${rec ? `<div class="tw-rec small">${rec}</div>` : ''}
   </section>`;
 }
+/** Nur die Karte neu zeichnen (Blättern), Rest der Seite bleibt. */
+function redrawTrainingCard() {
+  const el = document.getElementById('training-card');
+  if (el) el.outerHTML = trainingHtml();
+}
+function stepTrainingWeek(dir) {
+  const d = trainingData();
+  if (!d) return;
+  const next = Math.max(0, Math.min(d.weeks.length - 1, trainingIdx + dir));
+  if (next !== trainingIdx) { trainingIdx = next; redrawTrainingCard(); }
+}
+// Wischen auf der Karte: nach rechts = ältere Woche, nach links = neuere
+let twTouch = null;
+app.addEventListener('touchstart', (e) => {
+  if (e.target.closest('#training-card')) twTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+}, { passive: true });
+app.addEventListener('touchend', (e) => {
+  if (!twTouch) return;
+  const dx = e.changedTouches[0].clientX - twTouch.x;
+  const dy = e.changedTouches[0].clientY - twTouch.y;
+  twTouch = null;
+  if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) stepTrainingWeek(dx > 0 ? 1 : -1);
+}, { passive: true });
 
 function backupReminderHtml(hist, now) {
   if (!storageOk || hist.length < 5) return '';
@@ -1776,6 +1809,9 @@ app.addEventListener('click', async (e) => {
   if (!el) return;
   const act = el.dataset.act;
   if (act.startsWith('gym-')) { handleGymAction(act, el); return; } // gym.js
+  if (act === 'tw-prev') { stepTrainingWeek(1); return; }
+  if (act === 'tw-next') { stepTrainingWeek(-1); return; }
+  if (act === 'tw-week') { trainingIdx = Number(el.dataset.i) || 0; redrawTrainingCard(); return; }
   switch (act) {
     case 'start': startRun(el.dataset.id); break;
     case 'toggle': togglePause(); el.blur(); break;

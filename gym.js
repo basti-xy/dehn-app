@@ -165,6 +165,20 @@ function computeGymStreak(list = getGymSessions(), now = new Date(), target = we
   return Object.assign(res, { current: cur, best, jokerUsedThisMonth: jokers.has(jokerMonth(thisWeek)) });
 }
 
+/** Für die Karte „Trainingswoche“ (app.js): Gym-Einheiten einer Woche plus aktuelle Gym-Streak. */
+function gymWeekSummary(from, to) {
+  if (!gymPlans()) return null;
+  const list = getGymSessions();
+  if (!list.length || to < dayKey(weekStart(parseDay(list[0].date)))) return null; // vor der ersten Milon-Einheit
+  const target = weeklyTarget();
+  const st = computeGymStreak(list, new Date(), target);
+  const sessions = list.filter((s) => s.date >= from && s.date <= to)
+    .map((s) => ({ date: s.date, splitName: splitById(s.splitId)?.name || s.splitName || s.splitId }));
+  const status = st.weeks.get(from)?.status || (sessions.length >= target ? 'done' : 'missed');
+  const statusLabel = { done: 'Ziel erreicht', joker: 'Joker eingesetzt', missed: 'Ziel verfehlt', open: 'Woche läuft' }[status] || '';
+  return { n: sessions.length, target, sessions, status, statusLabel, streak: st.current, best: st.best };
+}
+
 /* ---------- Progression ---------- */
 /** Alle erfassten Sätze einer Übung, neueste Einheit zuletzt. */
 function exerciseHistory(exId, list = getGymSessions()) {
